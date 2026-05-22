@@ -1,9 +1,10 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, BookOpen, BarChart2,
-  TrendingUp, BookMarked, Zap, ChevronLeft
+  TrendingUp, BookMarked, Zap, ChevronLeft,
 } from 'lucide-react';
 import { useState } from 'react';
+import { useAccount } from '../../context/AccountContext';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -15,10 +16,15 @@ const navItems = [
 
 const Sidebar = () => {
   const [collapsed, setCollapsed] = useState(false);
+  const navigate = useNavigate();
+  const { account } = useAccount();
 
   return (
-    <div className={`h-screen bg-[#111111] border-r border-[#1e1e1e] flex flex-col transition-all duration-300 ${collapsed ? 'w-16' : 'w-60'}`}>
-
+    <div
+      className={`h-screen bg-[#111111] border-r border-[#1e1e1e] flex flex-col transition-all duration-300 ${
+        collapsed ? 'w-16' : 'w-60'
+      }`}
+    >
       {/* Logo */}
       <div className="flex items-center justify-between px-4 py-5 border-b border-[#1e1e1e]">
         {!collapsed && (
@@ -31,14 +37,21 @@ const Sidebar = () => {
           onClick={() => setCollapsed(!collapsed)}
           className="text-gray-500 hover:text-white transition-colors ml-auto"
         >
-          <ChevronLeft size={18} className={`transition-transform ${collapsed ? 'rotate-180' : ''}`} />
+          <ChevronLeft
+            size={18}
+            className={`transition-transform ${collapsed ? 'rotate-180' : ''}`}
+          />
         </button>
       </div>
 
       {/* Add Trade Button */}
       <div className="px-3 py-4">
         <NavLink to="/trades">
-          <button className={`w-full bg-purple-600 hover:bg-purple-700 text-white rounded-lg py-2 text-sm font-medium transition-colors flex items-center gap-2 ${collapsed ? 'justify-center px-2' : 'px-4'}`}>
+          <button
+            className={`w-full bg-purple-600 hover:bg-purple-700 text-white rounded-lg py-2 text-sm font-medium transition-colors flex items-center gap-2 ${
+              collapsed ? 'justify-center px-2' : 'px-4'
+            }`}
+          >
             <span className="text-lg">+</span>
             {!collapsed && <span>Add Trade</span>}
           </button>
@@ -66,19 +79,27 @@ const Sidebar = () => {
         ))}
       </nav>
 
-      {/* Bottom User */}
-      <div className="px-4 py-4 border-t border-[#1e1e1e]">
-        <div className={`flex items-center gap-3 ${collapsed ? 'justify-center' : ''}`}>
-          <div className="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-            T
+      {/* Profile — clicks straight to Account Center */}
+      <div className="px-3 py-3 border-t border-[#1e1e1e]">
+        <button
+          onClick={() => navigate('/account')}
+          className={`w-full flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-[#1e1e1e] transition-colors group ${
+            collapsed ? 'justify-center' : ''
+          }`}
+        >
+          <div
+            className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 ring-2 ring-transparent group-hover:ring-purple-600/40 transition-all"
+            style={{ backgroundColor: account.avatarColor }}
+          >
+            {account.initials}
           </div>
           {!collapsed && (
-            <div>
-              <p className="text-white text-sm font-medium">Trading Queen</p>
-              <p className="text-gray-500 text-xs">Personal</p>
+            <div className="flex-1 text-left min-w-0">
+              <p className="text-white text-sm font-medium truncate">{account.name}</p>
+              <p className="text-gray-500 text-xs">{account.accountType}</p>
             </div>
           )}
-        </div>
+        </button>
       </div>
     </div>
   );

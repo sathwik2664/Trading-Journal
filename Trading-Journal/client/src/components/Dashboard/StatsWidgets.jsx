@@ -1,79 +1,138 @@
 import { formatCurrency } from '../../utils/helpers';
 import { TrendingUp, TrendingDown } from 'lucide-react';
+import { useAccount } from '../../context/AccountContext';
 
-const StatCard = ({ title, value, subtitle, color }) => (
-  <div className="bg-[#141414] border border-[#1e1e1e] rounded-xl p-4">
-    <div className="flex items-center justify-between mb-2">
-      <span className="text-gray-400 text-xs">{title}</span>
-    </div>
-    <div className={`text-2xl font-bold ${color}`}>{value}</div>
-    {subtitle && <div className="text-gray-500 text-xs mt-1">{subtitle}</div>}
+const G = '#00d48a';
+const R = '#ff4560';
+const pColor = v => (v >= 0 ? G : R);
+
+const Card = ({ children, className = '' }) => (
+  <div
+    className={`rounded-2xl ${className}`}
+    style={{
+      background: 'linear-gradient(145deg,#12121e,#0e0e18)',
+      border:     '1px solid rgba(255,255,255,0.07)',
+      padding:    '14px 16px',
+    }}
+  >
+    {children}
   </div>
 );
 
+const CardLabel = ({ children }) => (
+  <p
+    style={{
+      fontSize:      9.5,
+      color:         '#2e2e48',
+      fontWeight:    700,
+      letterSpacing: '0.06em',
+      textTransform: 'uppercase',
+      margin:        '0 0 6px',
+    }}
+  >
+    {children}
+  </p>
+);
+
+const BigValue = ({ children, color = '#dde0ff', size = 22 }) => (
+  <p
+    style={{
+      fontSize:           size,
+      fontWeight:         800,
+      color,
+      margin:             0,
+      letterSpacing:      '-0.04em',
+      fontVariantNumeric: 'tabular-nums',
+    }}
+  >
+    {children}
+  </p>
+);
+
 const StatsWidgets = ({ trades }) => {
-  const netPnl = trades.reduce((sum, t) => sum + t.pnl, 0);
-  const winners = trades.filter(t => t.pnl > 0);
-  const losers = trades.filter(t => t.pnl < 0);
-  const winRate = trades.length ? ((winners.length / trades.length) * 100).toFixed(2) : 0;
-  const avgWin = winners.length ? winners.reduce((s, t) => s + t.pnl, 0) / winners.length : 0;
-  const avgLoss = losers.length ? Math.abs(losers.reduce((s, t) => s + t.pnl, 0) / losers.length) : 0;
-  const profitFactor = avgLoss ? (avgWin * winners.length / (avgLoss * losers.length)).toFixed(2) : 0;
-  const tradeExpectancy = trades.length
-    ? ((winRate / 100) * avgWin - (1 - winRate / 100) * avgLoss).toFixed(2)
+  const { account } = useAccount();                        // ← pull from context
+
+  const netPnl   = trades.reduce((sum, t) => sum + t.pnl, 0);
+  const winners  = trades.filter(t => t.pnl > 0);
+  const losers   = trades.filter(t => t.pnl < 0);
+  const winRate  = trades.length ? (winners.length / trades.length) * 100 : 0;
+  const avgWin   = winners.length ? winners.reduce((s, t) => s + t.pnl, 0) / winners.length : 0;
+  const avgLoss  = losers.length  ? Math.abs(losers.reduce((s, t) => s + t.pnl, 0) / losers.length) : 0;
+
+  const profitFactor = avgLoss && losers.length
+    ? (avgWin * winners.length) / (avgLoss * losers.length)
     : 0;
-  const accountBalance = 32000 + netPnl;
+
+  const expectancy = trades.length
+    ? (winRate / 100) * avgWin - (1 - winRate / 100) * avgLoss
+    : 0;
+
+  // ── balance & P&L come from AccountContext, not hardcoded ─────────────────
+  const accountBalance = account.currentBalance;
+  const pnlVsStart     = account.currentBalance - account.startingBalance;
 
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col gap-2" style={{ width: 210, flexShrink: 0 }}>
+
       {/* Account Balance */}
-      <div className="bg-[#141414] border border-[#1e1e1e] rounded-xl p-4">
-        <div className="flex items-center justify-between">
+      <Card>
+        <div className="flex items-start justify-between">
           <div>
-            <p className="text-gray-400 text-xs mb-1">Account Balance & P&L</p>
-            <p className="text-white text-2xl font-bold">{formatCurrency(accountBalance)}</p>
-            <p className={`text-sm mt-1 ${netPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              P&L: {formatCurrency(netPnl)}
+            <CardLabel>Account Balance &amp; P&amp;L</CardLabel>
+            <BigValue size={20}>{formatCurrency(accountBalance)}</BigValue>
+            <p
+              style={{
+                fontSize: 11,
+                color: pColor(pnlVsStart),
+                fontWeight: 700,
+                margin: '4px 0 0',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              P&L: {formatCurrency(pnlVsStart)}
             </p>
           </div>
-          {netPnl >= 0
-            ? <TrendingUp className="text-green-400" size={24} />
-            : <TrendingDown className="text-red-400" size={24} />
+          {pnlVsStart >= 0
+            ? <TrendingUp  size={20} color={G} style={{ marginTop: 2 }} />
+            : <TrendingDown size={20} color={R} style={{ marginTop: 2 }} />
           }
         </div>
-      </div>
+      </Card>
 
-      {/* Win Rate */}
-      <div className="bg-[#141414] border border-[#1e1e1e] rounded-xl p-4">
-        <p className="text-gray-400 text-xs mb-2">Trade Win %</p>
-        <div className="flex items-center justify-between">
-          <p className="text-white text-2xl font-bold">{winRate}%</p>
-          <div className="flex gap-2 text-xs">
-            <span className="text-green-400">{winners.length} W</span>
-            <span className="text-red-400">{losers.length} L</span>
+      {/* Trade Win % */}
+      <Card>
+        <div className="flex items-center justify-between mb-2">
+          <CardLabel>Trade Win %</CardLabel>
+          <div className="flex gap-1">
+            <span style={{ fontSize:10, fontWeight:800, color:G, background:'rgba(0,212,138,0.1)', border:'1px solid rgba(0,212,138,0.2)', padding:'1px 6px', borderRadius:5 }}>
+              {winners.length}W
+            </span>
+            <span style={{ fontSize:10, fontWeight:800, color:R, background:'rgba(255,69,96,0.1)', border:'1px solid rgba(255,69,96,0.2)', padding:'1px 6px', borderRadius:5 }}>
+              {losers.length}L
+            </span>
           </div>
         </div>
-        <div className="mt-2 h-2 bg-[#2a2a2a] rounded-full overflow-hidden">
+        <BigValue>{winRate.toFixed(2)}%</BigValue>
+        <div className="mt-2 rounded-full overflow-hidden" style={{ height:4, background:'rgba(255,255,255,0.05)' }}>
           <div
-            className="h-full bg-green-500 rounded-full"
-            style={{ width: `${winRate}%` }}
+            className="h-full rounded-full"
+            style={{ width:`${Math.min(winRate,100)}%`, background:`linear-gradient(90deg,${G},#00ff9f)`, transition:'width 0.4s ease' }}
           />
         </div>
-      </div>
+      </Card>
 
       {/* Profit Factor */}
-      <StatCard
-        title="Profit Factor"
-        value={profitFactor}
-        color="text-white"
-      />
+      <Card>
+        <CardLabel>Profit Factor</CardLabel>
+        <BigValue>{profitFactor.toFixed(2)}</BigValue>
+      </Card>
 
       {/* Trade Expectancy */}
-      <StatCard
-        title="Trade Expectancy"
-        value={formatCurrency(Number(tradeExpectancy))}
-        color={tradeExpectancy >= 0 ? 'text-green-400' : 'text-red-400'}
-      />
+      <Card>
+        <CardLabel>Trade Expectancy</CardLabel>
+        <BigValue color={pColor(expectancy)}>{formatCurrency(expectancy)}</BigValue>
+      </Card>
+
     </div>
   );
 };
