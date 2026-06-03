@@ -29,7 +29,11 @@ const Sidebar = () => {
       <div className="flex items-center justify-between px-4 py-5 border-b border-[#1e1e1e]">
         {!collapsed && (
           <div className="flex items-center gap-2">
-            <Zap size={22} className="text-purple-500" />
+            <img
+  src="/logo.png"
+  alt="Trade Maniac"
+  className="w-8 h-8 rounded-md object-cover"
+/>
             <span className="text-white font-bold text-lg tracking-wide">Trade Maniac</span>
           </div>
         )}
