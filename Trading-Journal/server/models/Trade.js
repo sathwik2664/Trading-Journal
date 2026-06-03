@@ -16,7 +16,13 @@ const TradeSchema = new mongoose.Schema({
   pnl:         { type: Number, default: null },
   tags:        [{ type: String }],
   notes:       { type: String, default: null },
-  screenshot:  { type: String, default: null },
+  screenshot:  { type: String, default: null }, // kept for backward compat
+images: [{
+  id:      { type: String },
+  src:     { type: String },
+  name:    { type: String },
+  addedAt: { type: String },
+}],
 }, { timestamps: true });
 
 module.exports = mongoose.model('Trade', TradeSchema);

@@ -1,136 +1,294 @@
 import { formatCurrency } from '../../utils/helpers';
-import { TrendingUp, TrendingDown } from 'lucide-react';
+import { TrendingUp, TrendingDown, Award, AlertTriangle } from 'lucide-react';
 import { useAccount } from '../../context/AccountContext';
 
-const G = '#00d48a';
-const R = '#ff4560';
+const G      = '#00d48a';
+const R      = '#ff4560';
 const pColor = v => (v >= 0 ? G : R);
 
-const Card = ({ children, className = '' }) => (
+// ── primitives ────────────────────────────────────────────────────────────────
+const Card = ({ children, full = false }) => (
   <div
-    className={`rounded-2xl ${className}`}
     style={{
-      background: 'linear-gradient(145deg,#12121e,#0e0e18)',
-      border:     '1px solid rgba(255,255,255,0.07)',
-      padding:    '14px 16px',
+      background:   'linear-gradient(145deg,#12121e,#0e0e18)',
+      border:       '1px solid rgba(255,255,255,0.07)',
+      borderRadius: 12,
+      padding:      '11px 13px',
+      gridColumn:   full ? 'span 2' : 'span 1',
+      boxSizing:    'border-box',
     }}
   >
     {children}
   </div>
 );
 
-const CardLabel = ({ children }) => (
-  <p
-    style={{
-      fontSize:      9.5,
-      color:         '#2e2e48',
-      fontWeight:    700,
-      letterSpacing: '0.06em',
-      textTransform: 'uppercase',
-      margin:        '0 0 6px',
-    }}
-  >
+const Label = ({ children }) => (
+  <p style={{
+    fontSize:      8.5,
+    color:         '#2e2e48',
+    fontWeight:    700,
+    letterSpacing: '0.07em',
+    textTransform: 'uppercase',
+    margin:        '0 0 5px',
+  }}>
     {children}
   </p>
 );
 
-const BigValue = ({ children, color = '#dde0ff', size = 22 }) => (
-  <p
-    style={{
-      fontSize:           size,
-      fontWeight:         800,
-      color,
-      margin:             0,
-      letterSpacing:      '-0.04em',
-      fontVariantNumeric: 'tabular-nums',
-    }}
-  >
+const Value = ({ children, color = '#dde0ff', size = 17 }) => (
+  <p style={{
+    fontSize:           size,
+    fontWeight:         800,
+    color,
+    margin:             0,
+    letterSpacing:      '-0.04em',
+    fontVariantNumeric: 'tabular-nums',
+    lineHeight:         1,
+  }}>
     {children}
   </p>
 );
 
+const MiniBar = ({ pct, color }) => (
+  <div style={{
+    height:       3,
+    background:   'rgba(255,255,255,0.05)',
+    borderRadius: 2,
+    marginTop:    6,
+    overflow:     'hidden',
+  }}>
+    <div style={{
+      height:     '100%',
+      width:      `${Math.min(Math.max(pct, 0), 100)}%`,
+      background: color,
+      borderRadius: 2,
+      transition: 'width 0.55s ease',
+    }} />
+  </div>
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 const StatsWidgets = ({ trades }) => {
-  const { account } = useAccount();                        // ← pull from context
+  const { account } = useAccount();
 
-  const netPnl   = trades.reduce((sum, t) => sum + t.pnl, 0);
-  const winners  = trades.filter(t => t.pnl > 0);
-  const losers   = trades.filter(t => t.pnl < 0);
-  const winRate  = trades.length ? (winners.length / trades.length) * 100 : 0;
-  const avgWin   = winners.length ? winners.reduce((s, t) => s + t.pnl, 0) / winners.length : 0;
-  const avgLoss  = losers.length  ? Math.abs(losers.reduce((s, t) => s + t.pnl, 0) / losers.length) : 0;
+  // ── derived metrics ───────────────────────────────────────────────────
+  const winners = trades.filter(t => t.pnl > 0);
+  const losers  = trades.filter(t => t.pnl < 0);
 
-  const profitFactor = avgLoss && losers.length
-    ? (avgWin * winners.length) / (avgLoss * losers.length)
+  const winRate = trades.length
+    ? (winners.length / trades.length) * 100
     : 0;
+
+  const avgWin = winners.length
+    ? winners.reduce((s, t) => s + t.pnl, 0) / winners.length
+    : 0;
+
+  const avgLoss = losers.length
+    ? Math.abs(losers.reduce((s, t) => s + t.pnl, 0) / losers.length)
+    : 0;
+
+  const grossWin  = winners.reduce((s, t) => s + t.pnl, 0);
+  const grossLoss = Math.abs(losers.reduce((s, t) => s + t.pnl, 0));
+
+  const profitFactor = grossLoss ? grossWin / grossLoss : 0;
 
   const expectancy = trades.length
     ? (winRate / 100) * avgWin - (1 - winRate / 100) * avgLoss
     : 0;
 
-  // ── balance & P&L come from AccountContext, not hardcoded ─────────────────
-  const accountBalance = account.currentBalance;
-  const pnlVsStart     = account.currentBalance - account.startingBalance;
+  // max drawdown from running equity
+  const sortedAsc = [...trades].sort((a, b) => new Date(a.date) - new Date(b.date));
+  let runPnl = 0, peak = 0, maxDD = 0;
+  sortedAsc.forEach(t => {
+    runPnl += t.pnl;
+    if (runPnl > peak) peak = runPnl;
+    const dd = peak - runPnl;
+    if (dd > maxDD) maxDD = dd;
+  });
+
+  // best & worst single trade
+  const bestTrade  = trades.length ? Math.max(...trades.map(t => t.pnl)) : 0;
+  const worstTrade = trades.length ? Math.min(...trades.map(t => t.pnl)) : 0;
+
+  // current streak (by date, most recent first)
+  const byDate = [...trades].sort((a, b) => new Date(b.date) - new Date(a.date));
+  let streak = 0;
+  if (byDate.length) {
+    const isWin = byDate[0].pnl >= 0;
+    for (const t of byDate) {
+      if ((t.pnl >= 0) === isWin) streak++;
+      else break;
+    }
+    if (!isWin) streak = -streak;
+  }
+
+  // account
+  const balance    = account.currentBalance;
+  const pnlVsStart = account.currentBalance - account.startingBalance;
+
+  // profit factor colour
+  const pfColor = profitFactor >= 1.5 ? G : profitFactor >= 1 ? '#f59e0b' : R;
 
   return (
-    <div className="flex flex-col gap-2" style={{ width: 210, flexShrink: 0 }}>
+    <div style={{
+      display:             'grid',
+      gridTemplateColumns: '1fr 1fr',
+      gap:                 8,
+      width:               220,
+      flexShrink:          0,
+    }}>
 
-      {/* Account Balance */}
-      <Card>
-        <div className="flex items-start justify-between">
-          <div>
-            <CardLabel>Account Balance &amp; P&amp;L</CardLabel>
-            <BigValue size={20}>{formatCurrency(accountBalance)}</BigValue>
-            <p
-              style={{
-                fontSize: 11,
-                color: pColor(pnlVsStart),
-                fontWeight: 700,
-                margin: '4px 0 0',
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              P&L: {formatCurrency(pnlVsStart)}
+      {/* ── Account Balance — full width ─────────────────────────────── */}
+      <Card full>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+          <div style={{ flex: 1 }}>
+            <Label>Account Balance</Label>
+            <Value size={19}>{formatCurrency(balance)}</Value>
+            <p style={{
+              fontSize:           10,
+              color:              pColor(pnlVsStart),
+              fontWeight:         700,
+              margin:             '4px 0 0',
+              fontVariantNumeric: 'tabular-nums',
+            }}>
+              {pnlVsStart >= 0 ? '+' : ''}{formatCurrency(pnlVsStart)} all time
             </p>
           </div>
           {pnlVsStart >= 0
-            ? <TrendingUp  size={20} color={G} style={{ marginTop: 2 }} />
-            : <TrendingDown size={20} color={R} style={{ marginTop: 2 }} />
+            ? <TrendingUp  size={17} color={G} style={{ marginTop: 2, flexShrink: 0 }} />
+            : <TrendingDown size={17} color={R} style={{ marginTop: 2, flexShrink: 0 }} />
           }
         </div>
       </Card>
 
-      {/* Trade Win % */}
+      {/* ── Win Rate ─────────────────────────────────────────────────── */}
       <Card>
-        <div className="flex items-center justify-between mb-2">
-          <CardLabel>Trade Win %</CardLabel>
-          <div className="flex gap-1">
-            <span style={{ fontSize:10, fontWeight:800, color:G, background:'rgba(0,212,138,0.1)', border:'1px solid rgba(0,212,138,0.2)', padding:'1px 6px', borderRadius:5 }}>
-              {winners.length}W
-            </span>
-            <span style={{ fontSize:10, fontWeight:800, color:R, background:'rgba(255,69,96,0.1)', border:'1px solid rgba(255,69,96,0.2)', padding:'1px 6px', borderRadius:5 }}>
-              {losers.length}L
-            </span>
+        <Label>Win Rate</Label>
+        <Value color={winRate >= 50 ? G : R}>{winRate.toFixed(1)}%</Value>
+        <MiniBar pct={winRate} color={winRate >= 50 ? G : R} />
+        <p style={{ fontSize: 8.5, color: '#2a2a46', margin: '4px 0 0', fontWeight: 600 }}>
+          {winners.length}W &middot; {losers.length}L
+        </p>
+      </Card>
+
+      {/* ── Profit Factor ─────────────────────────────────────────────── */}
+      <Card>
+        <Label>Profit Factor</Label>
+        <Value color={pfColor}>{profitFactor.toFixed(2)}</Value>
+        <MiniBar pct={Math.min(profitFactor / 3, 1) * 100} color={pfColor} />
+      </Card>
+
+      {/* ── Expectancy ───────────────────────────────────────────────── */}
+      <Card>
+        <Label>Expectancy</Label>
+        <Value color={pColor(expectancy)} size={14}>{formatCurrency(expectancy)}</Value>
+        <p style={{ fontSize: 8.5, color: '#2a2a46', margin: '4px 0 0' }}>per trade</p>
+      </Card>
+
+      {/* ── Max Drawdown ──────────────────────────────────────────────── */}
+      <Card>
+        <Label>Max Drawdown</Label>
+        <Value color={R} size={14}>
+          {maxDD > 0 ? `-${formatCurrency(maxDD)}` : '$0.00'}
+        </Value>
+        <p style={{ fontSize: 8.5, color: '#2a2a46', margin: '4px 0 0' }}>from peak</p>
+      </Card>
+
+      {/* ── Avg Win vs Avg Loss — full width ─────────────────────────── */}
+      <Card full>
+        <Label>Avg Win vs Avg Loss</Label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3 }}>
+          <div style={{ flex: 1 }}>
+            <p style={{
+              fontSize: 8.5, color: G, opacity: 0.65,
+              fontWeight: 700, margin: '0 0 2px', letterSpacing: '0.04em',
+            }}>
+              AVG WIN
+            </p>
+            <Value color={G} size={13}>{formatCurrency(avgWin)}</Value>
+          </div>
+
+          <div style={{ width: 1, height: 26, background: 'rgba(255,255,255,0.06)', flexShrink: 0 }} />
+
+          <div style={{ flex: 1, textAlign: 'right' }}>
+            <p style={{
+              fontSize: 8.5, color: R, opacity: 0.65,
+              fontWeight: 700, margin: '0 0 2px', letterSpacing: '0.04em',
+            }}>
+              AVG LOSS
+            </p>
+            <Value color={R} size={13}>{formatCurrency(avgLoss)}</Value>
           </div>
         </div>
-        <BigValue>{winRate.toFixed(2)}%</BigValue>
-        <div className="mt-2 rounded-full overflow-hidden" style={{ height:4, background:'rgba(255,255,255,0.05)' }}>
-          <div
-            className="h-full rounded-full"
-            style={{ width:`${Math.min(winRate,100)}%`, background:`linear-gradient(90deg,${G},#00ff9f)`, transition:'width 0.4s ease' }}
-          />
+
+        {/* ratio bar */}
+        {(avgWin + avgLoss) > 0 && (
+          <div style={{
+            height: 3, background: `rgba(255,69,96,0.3)`,
+            borderRadius: 2, marginTop: 8, overflow: 'hidden',
+          }}>
+            <div style={{
+              height: '100%',
+              width:  `${(avgWin / (avgWin + avgLoss)) * 100}%`,
+              background: G, borderRadius: 2,
+              transition: 'width 0.55s ease',
+            }} />
+          </div>
+        )}
+      </Card>
+
+      {/* ── Best Trade ───────────────────────────────────────────────── */}
+      <Card>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 5 }}>
+          <Award size={9} color={G} />
+          <Label>Best Trade</Label>
         </div>
+        <Value color={G} size={13}>
+          {bestTrade > 0 ? '+' : ''}{formatCurrency(bestTrade)}
+        </Value>
       </Card>
 
-      {/* Profit Factor */}
+      {/* ── Worst Trade ──────────────────────────────────────────────── */}
       <Card>
-        <CardLabel>Profit Factor</CardLabel>
-        <BigValue>{profitFactor.toFixed(2)}</BigValue>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 5 }}>
+          <AlertTriangle size={9} color={R} />
+          <Label>Worst Trade</Label>
+        </div>
+        <Value color={R} size={13}>{formatCurrency(worstTrade)}</Value>
       </Card>
 
-      {/* Trade Expectancy */}
-      <Card>
-        <CardLabel>Trade Expectancy</CardLabel>
-        <BigValue color={pColor(expectancy)}>{formatCurrency(expectancy)}</BigValue>
+      {/* ── Current Streak — full width ──────────────────────────────── */}
+      <Card full>
+        <Label>Current Streak</Label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{
+            fontSize:      28,
+            fontWeight:    900,
+            color:         streak >= 0 ? G : R,
+            letterSpacing: '-0.05em',
+            lineHeight:    1,
+          }}>
+            {Math.abs(streak)}
+          </span>
+          <div>
+            <p style={{
+              fontSize:   11,
+              fontWeight: 700,
+              color:      streak >= 0 ? G : R,
+              margin:     0,
+              lineHeight: 1.3,
+            }}>
+              {streak === 0
+                ? 'No active streak'
+                : streak > 0
+                ? 'Win Streak 🔥'
+                : 'Loss Streak ❄️'}
+            </p>
+            <p style={{ fontSize: 8.5, color: '#2a2a46', margin: 0 }}>
+              consecutive {streak >= 0 ? 'wins' : 'losses'}
+            </p>
+          </div>
+        </div>
       </Card>
 
     </div>

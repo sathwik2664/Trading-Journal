@@ -21,7 +21,17 @@ exports.getNoteById = async (req, res) => {
 
 exports.createNote = async (req, res) => {
   try {
-    const note = new Note(req.body);
+    const note = new Note({
+      title:          req.body.title         ?? '',
+      content:        req.body.content       ?? '',
+      folder:         req.body.folder        ?? 'trade_notes',
+      tags:           req.body.tags          ?? [],
+      linkedTradeIds: req.body.linkedTradeIds ?? [],
+      sessionDate:    req.body.sessionDate   ?? '',
+      netPnl:         req.body.netPnl        ?? 0,
+      images:         req.body.images        ?? [],
+      template:       req.body.template      ?? '',
+    });
     const saved = await note.save();
     res.status(201).json(saved);
   } catch (err) {
@@ -32,8 +42,11 @@ exports.createNote = async (req, res) => {
 exports.updateNote = async (req, res) => {
   try {
     const updated = await Note.findByIdAndUpdate(
-      req.params.id, req.body, { new: true }
+      req.params.id,
+      req.body,
+      { new: true, runValidators: true }
     );
+    if (!updated) return res.status(404).json({ message: 'Note not found' });
     res.json(updated);
   } catch (err) {
     res.status(400).json({ message: err.message });

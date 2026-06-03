@@ -1,61 +1,94 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import * as accountService from '../services/accountService';
 
 const AccountContext = createContext(null);
 
 const DEFAULT_ACCOUNT = {
-  name: 'Trading Queen',
-  initials: 'T',
-  email: 'tradingqueen@example.com',
-  accountType: 'Personal',
-  broker: 'TD Ameritrade',
-  currency: 'USD',
-  startingBalance: 32000,
-  currentBalance: 32806,
-  riskPerTrade: 1,
-  maxDailyLoss: 3,
-  targetProfit: 5,
+  name: 'Trader', initials: 'T', email: '',
+  accountType: 'Personal', broker: 'TD Ameritrade', currency: 'USD',
+  startingBalance: 32000, currentBalance: 32000,
+  riskPerTrade: 1, maxDailyLoss: 3, targetProfit: 5,
   timezone: 'America/New_York',
-  notifications: {
-    tradeAlerts: true,
-    dailySummary: true,
-    weeklyReport: false,
-    milestones: true,
-  },
-  theme: 'dark',
-  avatarColor: '#7c3aed',
+  notifications: { tradeAlerts: true, dailySummary: true, weeklyReport: false, milestones: true },
+  theme: 'dark', avatarColor: '#7c3aed',
+  transactions: [],
 };
 
 export const AccountProvider = ({ children }) => {
-  const [account, setAccount] = useState(() => {
+  const [account, setAccount] = useState(DEFAULT_ACCOUNT);
+  const [accountLoading, setAccountLoading] = useState(true);
+
+  const fetchAccount = useCallback(async () => {
     try {
-      const stored = localStorage.getItem('tz_account');
-      return stored ? { ...DEFAULT_ACCOUNT, ...JSON.parse(stored) } : DEFAULT_ACCOUNT;
-    } catch {
-      return DEFAULT_ACCOUNT;
+      const res = await accountService.getAccount();
+      setAccount(res.data);
+    } catch (err) {
+      console.error('Could not load account:', err);
+    } finally {
+      setAccountLoading(false);
     }
-  });
+  }, []);
 
-  useEffect(() => {
-    localStorage.setItem('tz_account', JSON.stringify(account));
-  }, [account]);
+  useEffect(() => { fetchAccount(); }, [fetchAccount]);
 
-  const updateAccount = (updates) => {
-    setAccount(prev => ({ ...prev, ...updates }));
+  const updateAccount = async (updates) => {
+    try {
+      const res = await accountService.updateAccount(updates);
+      setAccount(res.data);
+    } catch (err) {
+      console.error('updateAccount failed:', err);
+    }
   };
 
-  const updateBalance = (newBalance) => {
-    setAccount(prev => ({ ...prev, currentBalance: parseFloat(newBalance) }));
+  const updateBalance = async (newBalance) => {
+    try {
+      const res = await accountService.updateBalance(newBalance);
+      setAccount(res.data);
+    } catch (err) {
+      console.error('updateBalance failed:', err);
+    }
   };
 
-  const updateNotification = (key, value) => {
-    setAccount(prev => ({
-      ...prev,
-      notifications: { ...prev.notifications, [key]: value },
-    }));
+  const updateNotification = async (key, value) => {
+    try {
+      const updated = {
+        ...account,
+        notifications: { ...account.notifications, [key]: value },
+      };
+      const res = await accountService.updateAccount(updated);
+      setAccount(res.data);
+    } catch (err) {
+      console.error('updateNotification failed:', err);
+    }
+  };
+
+  const deposit = async (amount, description) => {
+    const res = await accountService.deposit(amount, description);
+    setAccount(res.data);
+    return res.data;
+  };
+
+  const withdraw = async (amount, description) => {
+    const res = await accountService.withdraw(amount, description);
+    setAccount(res.data);
+    return res.data;
+  };
+
+  const applyTradePnl = async (pnl, tradeId, symbol) => {
+    try {
+      const res = await accountService.applyTradePnl(pnl, tradeId, symbol);
+      setAccount(res.data);
+    } catch (err) {
+      console.error('applyTradePnl failed:', err);
+    }
   };
 
   return (
-    <AccountContext.Provider value={{ account, updateAccount, updateBalance, updateNotification }}>
+    <AccountContext.Provider value={{
+      account, accountLoading, fetchAccount,
+      updateAccount, updateBalance, updateNotification,
+      deposit, withdraw, applyTradePnl,
+    }}>
       {children}
     </AccountContext.Provider>
   );

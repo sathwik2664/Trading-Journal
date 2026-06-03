@@ -1,26 +1,19 @@
 const mongoose = require('mongoose');
 
 const NoteSchema = new mongoose.Schema({
-  title: { type: String, required: true },
-  content: { type: String, default: '' },
-  folder: { 
-    type: String, 
-    enum: [
-      'Trade Notes',
-      'Daily Journal', 
-      'Sessions Recap',
-      'Quarterly Goals',
-      'Trading Plan',
-      'Plan of Action',
-      'Templates'
-    ],
-    default: 'Trade Notes'
+  title:         { type: String, default: '' },        // removed required:true so empty-title drafts work
+  content:       { type: String, default: '' },
+  folder: {
+    type: String,
+    enum: ['trade_notes', 'session_recap', 'pre_market'],
+    default: 'trade_notes',
   },
-  tags: [{ type: String }],
-  netPnl: { type: Number, default: 0 },
-  tradeDate: { type: Date },
-  images: [{ type: String }],
-  template: { type: String, default: '' },
+  tags:            [{ type: String }],
+  linkedTradeIds:  [{ type: String }],                 // trade _id strings linked to this note
+  sessionDate:     { type: String, default: '' },      // 'YYYY-MM-DD' for session recaps
+  netPnl:          { type: Number, default: 0 },
+  images:          [{ type: String }],
+  template:        { type: String, default: '' },
 }, { timestamps: true });
 
 module.exports = mongoose.model('Note', NoteSchema);

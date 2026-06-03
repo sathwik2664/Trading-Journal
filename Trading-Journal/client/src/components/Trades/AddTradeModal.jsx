@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useSetups } from '../../hooks/useSetups';
 import Modal from '../shared/Modal';
 import Button from '../shared/Button';
 
@@ -145,15 +146,15 @@ const Field = ({ label, children, className='' }) => (
 );
 
 const StrategyManager = ({ strategies, onUpdate, onClose }) => {
-  const [list, setList]     = useState([...strategies]);
-  const [newVal, setNewVal] = useState('');
+  const [list, setList]       = useState([...strategies]);
+  const [newVal, setNewVal]   = useState('');
   const [editIdx, setEditIdx] = useState(null);
   const [editVal, setEditVal] = useState('');
 
-  const add = () => { const v = newVal.trim(); if (!v || list.includes(v)) return; setList(l => [...l, v]); setNewVal(''); };
-  const remove = (i) => setList(l => l.filter((_, idx) => idx !== i));
+  const add      = () => { const v = newVal.trim(); if (!v || list.includes(v)) return; setList(l => [...l, v]); setNewVal(''); };
+  const remove   = (i) => setList(l => l.filter((_, idx) => idx !== i));
   const startEdit = (i) => { setEditIdx(i); setEditVal(list[i]); };
-  const saveEdit = () => { const v = editVal.trim(); if (!v) return; setList(l => l.map((x, i) => i === editIdx ? v : x)); setEditIdx(null); };
+  const saveEdit  = () => { const v = editVal.trim(); if (!v) return; setList(l => l.map((x, i) => i === editIdx ? v : x)); setEditIdx(null); };
 
   return (
     <div className="bg-[#111114] border border-[#27272a] rounded-2xl p-4 space-y-3">
@@ -178,7 +179,7 @@ const StrategyManager = ({ strategies, onUpdate, onClose }) => {
               <>
                 <span className="flex-1 text-sm text-gray-200">{s}</span>
                 <button onClick={() => startEdit(i)} className="text-gray-600 hover:text-violet-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity">Edit</button>
-                <button onClick={() => remove(i)} className="text-gray-600 hover:text-red-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity ml-1">✕</button>
+                <button onClick={() => remove(i)}    className="text-gray-600 hover:text-red-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity ml-1">✕</button>
               </>
             )}
           </div>
@@ -195,9 +196,9 @@ const PriceLadder = ({ tp, entryPrice, sl, side, onChange }) => {
   const s = parseFloat(sl) || 0;
   const t = parseFloat(tp) || 0;
 
-  const risk   = e && s ? Math.abs(e - s) : 0;
-  const reward = e && t ? Math.abs(t - e) : 0;
-  const total  = risk + reward;
+  const risk      = e && s ? Math.abs(e - s) : 0;
+  const reward    = e && t ? Math.abs(t - e) : 0;
+  const total     = risk + reward;
   const rewardPct = total ? Math.max((reward / total) * 100, 15) : 50;
   const riskPct   = total ? Math.max((risk   / total) * 100, 15) : 50;
 
@@ -206,13 +207,10 @@ const PriceLadder = ({ tp, entryPrice, sl, side, onChange }) => {
 
   return (
     <div className="flex gap-3 items-stretch">
-      {/* Visual bar */}
       <div className="flex flex-col w-1.5 rounded-full overflow-hidden flex-shrink-0" style={{ minHeight: 168 }}>
         <div style={{ height: `${rewardPct}%`, backgroundColor: '#22c55e', opacity: 0.7, borderRadius: '4px 4px 0 0' }} />
-        <div style={{ height: `${riskPct}%`, backgroundColor: '#ef4444', opacity: 0.7, borderRadius: '0 0 4px 4px' }} />
+        <div style={{ height: `${riskPct}%`,   backgroundColor: '#ef4444', opacity: 0.7, borderRadius: '0 0 4px 4px' }} />
       </div>
-
-      {/* Inputs stacked */}
       <div className="flex-1 flex flex-col gap-px">
         {/* TP */}
         <div className="bg-emerald-500/8 border border-emerald-500/20 rounded-t-2xl px-4 py-3">
@@ -220,46 +218,23 @@ const PriceLadder = ({ tp, entryPrice, sl, side, onChange }) => {
             <span className="text-[10px] uppercase tracking-widest text-emerald-500/60 font-medium">Take Profit</span>
             {e && t ? <span className="text-emerald-500/50 text-[10px] font-semibold">+{Math.abs(t - e).toFixed(2)} pts</span> : null}
           </div>
-          <input
-            type="number"
-            value={tp}
-            onChange={ev => onChange('tp', ev.target.value)}
-            onWheel={ev => ev.target.blur()}
-            placeholder="0.00"
-            className={numInput('text-emerald-400', 'placeholder-emerald-900/40')}
-          />
+          <input type="number" value={tp} onChange={ev => onChange('tp', ev.target.value)} onWheel={ev => ev.target.blur()} placeholder="0.00" className={numInput('text-emerald-400','placeholder-emerald-900/40')} />
         </div>
-
         {/* Entry */}
         <div className="bg-[#111116] border border-[#2a2a2e] px-4 py-3">
           <div className="flex items-center justify-between mb-1">
             <span className="text-[10px] uppercase tracking-widest text-gray-500 font-medium">Entry Price *</span>
             <span className="text-[10px] text-gray-600">required</span>
           </div>
-          <input
-            type="number"
-            value={entryPrice}
-            onChange={ev => onChange('entryPrice', ev.target.value)}
-            onWheel={ev => ev.target.blur()}
-            placeholder="0.00"
-            className={numInput('text-white', 'placeholder-gray-700')}
-          />
+          <input type="number" value={entryPrice} onChange={ev => onChange('entryPrice', ev.target.value)} onWheel={ev => ev.target.blur()} placeholder="0.00" className={numInput('text-white','placeholder-gray-700')} />
         </div>
-
         {/* SL */}
         <div className="bg-red-500/8 border border-red-500/20 rounded-b-2xl px-4 py-3">
           <div className="flex items-center justify-between mb-1">
             <span className="text-[10px] uppercase tracking-widest text-red-500/60 font-medium">Stop Loss</span>
             {e && s ? <span className="text-red-500/50 text-[10px] font-semibold">-{Math.abs(e - s).toFixed(2)} pts</span> : null}
           </div>
-          <input
-            type="number"
-            value={sl}
-            onChange={ev => onChange('sl', ev.target.value)}
-            onWheel={ev => ev.target.blur()}
-            placeholder="0.00"
-            className={numInput('text-red-400', 'placeholder-red-900/40')}
-          />
+          <input type="number" value={sl} onChange={ev => onChange('sl', ev.target.value)} onWheel={ev => ev.target.blur()} placeholder="0.00" className={numInput('text-red-400','placeholder-red-900/40')} />
         </div>
       </div>
     </div>
@@ -268,16 +243,34 @@ const PriceLadder = ({ tp, entryPrice, sl, side, onChange }) => {
 
 /* ── Main Component ── */
 const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
-  const [form,       setForm]       = useState(initialForm);
-  const [loading,    setLoading]    = useState(false);
-  const [imgDrag,    setImgDrag]    = useState(false);
-  const [symQuery,   setSymQuery]   = useState('');
-  const [symOpen,    setSymOpen]    = useState(false);
-  const [strategies, setStrategies] = useState(loadStrategies);
-  const [showStrat,  setShowStrat]  = useState(false);
-  const [stratPicker,setStratPicker]= useState(false);
+  const [form,        setForm]        = useState(initialForm);
+  const [loading,     setLoading]     = useState(false);
+  const [imgDrag,     setImgDrag]     = useState(false);
+  const [symQuery,    setSymQuery]    = useState('');
+  const [symOpen,     setSymOpen]     = useState(false);
+  const [strategies,  setStrategies]  = useState(loadStrategies);
+  const [showStrat,   setShowStrat]   = useState(false);
+  const [stratPicker, setStratPicker] = useState(false);
   const symRef  = useRef(null);
   const fileRef = useRef(null);
+
+  // ── Pull Playbook setups (your existing hook, unchanged) ──────────────────
+  const { groupedSetups } = useSetups();
+
+  // Names that exist in Playbook → used to deduplicate local strategies list
+  const playbookNameSet = useMemo(() => {
+    const allSetups = Object.values(groupedSetups).flat();
+    return new Set(allSetups.map(s => s.name.toLowerCase()));
+  }, [groupedSetups]);
+
+  // Local strategies that are NOT already covered by a Playbook setup
+  const localOnly = useMemo(
+    () => strategies.filter(s => !playbookNameSet.has(s.toLowerCase())),
+    [strategies, playbookNameSet]
+  );
+
+  const hasPlaybookSetups = Object.keys(groupedSetups).length > 0;
+  const hasLocalOnly      = localOnly.length > 0;
 
   const set = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
 
@@ -316,18 +309,24 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
     set('screenshot', { file, previewUrl, base64 });
   }, []);
 
-  const handleFileChange = (e) => { if (e.target.files?.[0]) handleScreenshot(e.target.files[0]); };
-  const handleDrop = (e) => { e.preventDefault(); setImgDrag(false); if (e.dataTransfer.files?.[0]) handleScreenshot(e.dataTransfer.files[0]); };
-  const pasteHandler = useCallback((e) => {
+  const handleFileChange  = (e) => { if (e.target.files?.[0]) handleScreenshot(e.target.files[0]); };
+  const handleDrop        = (e) => { e.preventDefault(); setImgDrag(false); if (e.dataTransfer.files?.[0]) handleScreenshot(e.dataTransfer.files[0]); };
+  const pasteHandler      = useCallback((e) => {
     const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
     if (item) handleScreenshot(item.getAsFile());
   }, [handleScreenshot]);
 
   const handleStrategyUpdate = (newList) => { setStrategies(newList); saveStrategies(newList); setShowStrat(false); };
 
-  /* Auto-calculate PnL */
+  /* ── PnL calculation ── */
   const calcPnl = () => {
-    if (form.manualPnl !== '') return parseFloat(form.manualPnl) || 0;
+    if (form.manualPnl !== '') {
+      const val = parseFloat(form.manualPnl) || 0;
+      if (form.outcome === 'Loss')      return -Math.abs(val);
+      if (form.outcome === 'Win')       return  Math.abs(val);
+      if (form.outcome === 'Breakeven') return val;
+      return val;
+    }
     const risk = parseFloat(form.riskAmount);
     if (!risk) return null;
     if (form.outcome === 'Win'  && rrNum) return +(risk * rrNum).toFixed(2);
@@ -339,11 +338,18 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
   const estimatedPnl = useMemo(() => {
     const risk = parseFloat(form.riskAmount);
     if (!risk || !rrNum) return null;
-    return {
-      win:  +(risk * rrNum).toFixed(2),
-      loss: -risk,
-    };
+    return { win: +(risk * rrNum).toFixed(2), loss: -risk };
   }, [form.riskAmount, rrNum]);
+
+  const autoPnlHint = useMemo(() => {
+    if (!form.outcome || !form.riskAmount) return null;
+    const risk = parseFloat(form.riskAmount);
+    if (!risk) return null;
+    if (form.outcome === 'Win'  && rrNum) return `+$${(risk * rrNum).toFixed(2)}`;
+    if (form.outcome === 'Loss')          return `-$${risk}`;
+    if (form.outcome === 'Breakeven')     return '$0.00';
+    return null;
+  }, [form.outcome, form.riskAmount, rrNum]);
 
   const handleSubmit = async () => {
     if (!form.symbol || !form.tradeType || !form.entryPrice) {
@@ -383,29 +389,20 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
   const typeMeta = form.tradeType ? TYPE_META[form.tradeType] : null;
   const rrColor  = rrNum === null ? '#6b7280' : rrNum <= 0 ? '#f87171' : rrNum < 1 ? '#fb923c' : rrNum < 2 ? '#fbbf24' : '#34d399';
 
-  const handlePriceLadderChange = (key, val) => set(key, val);
-
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="New Trade">
       <div className="space-y-4 max-h-[82vh] overflow-y-auto pr-0.5 custom-scroll" onPaste={pasteHandler}>
 
         {/* Date */}
         <Field label="Trade Date">
-          <input
-            type="date"
-            value={form.date}
-            onChange={e => set('date', e.target.value)}
-            className={inputCls}
-          />
+          <input type="date" value={form.date} onChange={e => set('date', e.target.value)} className={inputCls} />
         </Field>
 
-        {/* Symbol Search */}
+        {/* Symbol */}
         <Field label="Symbol *">
           <div className="relative" ref={symRef}>
             <div className="relative">
-              {typeMeta && (
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-base pointer-events-none select-none">{typeMeta.icon}</span>
-              )}
+              {typeMeta && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-base pointer-events-none select-none">{typeMeta.icon}</span>}
               <input
                 value={symQuery}
                 onChange={handleSymbolInput}
@@ -415,10 +412,8 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
                 className={inputCls + (typeMeta ? ' pl-9' : '') + ' uppercase'}
               />
               {typeMeta && (
-                <span
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold px-2 py-0.5 rounded-full"
-                  style={{ color: typeMeta.color, background: typeMeta.color + '1a', border: `1px solid ${typeMeta.color}33` }}
-                >
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold px-2 py-0.5 rounded-full"
+                  style={{ color: typeMeta.color, background: typeMeta.color + '1a', border: `1px solid ${typeMeta.color}33` }}>
                   {form.tradeType.toUpperCase()}
                 </span>
               )}
@@ -436,9 +431,7 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
                         <span className="text-gray-500 text-xs ml-2 truncate">{r.label}</span>
                       </div>
                       <span className="shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-lg"
-                        style={{ color: m.color, background: m.color + '1a' }}>
-                        {r.type}
-                      </span>
+                        style={{ color: m.color, background: m.color + '1a' }}>{r.type}</span>
                     </button>
                   );
                 })}
@@ -464,15 +457,9 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
           </div>
         </Field>
 
-        {/* Price Ladder — TP / Entry / SL vertical */}
+        {/* Price Ladder */}
         <Field label="Price Levels">
-          <PriceLadder
-            tp={form.tp}
-            entryPrice={form.entryPrice}
-            sl={form.sl}
-            side={form.side}
-            onChange={handlePriceLadderChange}
-          />
+          <PriceLadder tp={form.tp} entryPrice={form.entryPrice} sl={form.sl} side={form.side} onChange={(key, val) => set(key, val)} />
         </Field>
 
         {/* RR Card */}
@@ -487,9 +474,7 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
                 <div className="flex items-baseline gap-1.5">
                   <span className="text-gray-400 text-sm">1 :</span>
                   <span className="text-2xl font-black tabular-nums" style={{ color: rrColor }}>{rr}</span>
-                  <span className="text-xs ml-1" style={{ color: rrColor }}>
-                    {rrNum >= 2 ? '✓ Great' : rrNum >= 1 ? 'Okay' : 'Poor'}
-                  </span>
+                  <span className="text-xs ml-1" style={{ color: rrColor }}>{rrNum >= 2 ? '✓ Great' : rrNum >= 1 ? 'Okay' : 'Poor'}</span>
                 </div>
               )}
             </div>
@@ -506,8 +491,7 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
         <Field label="Timeframe">
           <div className="flex flex-wrap gap-1.5">
             {TIMEFRAMES.map(tf => (
-              <button key={tf} type="button"
-                onClick={() => set('timeframe', form.timeframe === tf ? '' : tf)}
+              <button key={tf} type="button" onClick={() => set('timeframe', form.timeframe === tf ? '' : tf)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all
                   ${form.timeframe === tf
                     ? 'bg-violet-600/30 text-violet-300 border-violet-500/50'
@@ -536,7 +520,7 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
           </div>
         </Field>
 
-        {/* Strategy */}
+        {/* ── Strategy Picker ── */}
         <Field label="Strategy">
           <div className="space-y-2">
             <div className="flex gap-2">
@@ -550,63 +534,137 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
               </button>
               <button type="button"
                 onClick={() => { setShowStrat(p => !p); setStratPicker(false); }}
-                title="Manage strategies"
+                title="Manage local strategies"
                 className="px-3 py-2 bg-[#0b0b0d] border border-[#27272a] rounded-xl text-gray-500 hover:text-violet-400 hover:border-violet-500/40 text-sm transition-all">
                 ✎
               </button>
             </div>
+
             {stratPicker && (
-              <div className="bg-[#111114] border border-[#27272a] rounded-2xl p-3">
-                <div className="flex flex-wrap gap-1.5">
-                  {strategies.map(s => (
-                    <button key={s} type="button"
-                      onClick={() => { set('strategy', s); setStratPicker(false); }}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all
-                        ${form.strategy === s
-                          ? 'bg-violet-600/30 text-violet-300 border-violet-500/50'
-                          : 'bg-[#18181b] text-gray-400 border-[#27272a] hover:border-gray-500 hover:text-gray-200'}`}>
-                      {s}
-                    </button>
-                  ))}
-                </div>
+              <div className="bg-[#111114] border border-[#27272a] rounded-2xl p-3 space-y-3">
+
+                {/* ── Playbook setups grouped by category ── */}
+                {hasPlaybookSetups && (
+                  <>
+                    <div className="flex items-center gap-2 px-1">
+                      <span className="text-[10px] uppercase tracking-widest text-violet-400/80 font-semibold">📖 Playbook</span>
+                      <div className="flex-1 h-px bg-violet-500/15" />
+                    </div>
+
+                    {Object.entries(groupedSetups).map(([cat, items]) => (
+                      <div key={cat}>
+                        <div className="text-[10px] uppercase tracking-widest text-gray-500 font-medium mb-1.5 px-1">
+                          {cat}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {items.map(s => (
+                            <button key={s._id} type="button"
+                              onClick={() => { set('strategy', s.name); setStratPicker(false); }}
+                              title={s.description || s.name}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all
+                                ${form.strategy === s.name
+                                  ? 'bg-violet-600/30 text-violet-300 border-violet-500/50'
+                                  : 'bg-[#18181b] text-gray-400 border-[#27272a] hover:border-violet-500/40 hover:text-gray-200'}`}>
+                              {s.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {/* ── Local-only strategies not in Playbook ── */}
+                {hasLocalOnly && (
+                  <div>
+                    {hasPlaybookSetups && (
+                      <div className="flex items-center gap-2 px-1">
+                        <span className="text-[10px] uppercase tracking-widest text-gray-500/60 font-semibold">Other</span>
+                        <div className="flex-1 h-px bg-[#27272a]" />
+                      </div>
+                    )}
+                    <div className="flex flex-wrap gap-1.5 mt-1.5">
+                      {localOnly.map(s => (
+                        <button key={s} type="button"
+                          onClick={() => { set('strategy', s); setStratPicker(false); }}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all
+                            ${form.strategy === s
+                              ? 'bg-violet-600/30 text-violet-300 border-violet-500/50'
+                              : 'bg-[#18181b] text-gray-400 border-[#27272a] hover:border-gray-500 hover:text-gray-200'}`}>
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Empty state ── */}
+                {!hasPlaybookSetups && !hasLocalOnly && (
+                  <div className="text-center py-4 space-y-1">
+                    <p className="text-gray-500 text-xs">No strategies yet.</p>
+                    <p className="text-gray-600 text-[10px]">
+                      Add setups in the <span className="text-violet-400">Playbook</span> page — they appear here automatically.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
+
             {showStrat && (
               <StrategyManager strategies={strategies} onUpdate={handleStrategyUpdate} onClose={() => setShowStrat(false)} />
             )}
           </div>
         </Field>
 
-        {/* Risk & PnL Section */}
+        {/* Risk & PnL */}
         <div className="bg-[#0b0b0d] border border-[#27272a] rounded-2xl p-4 space-y-3">
           <span className="text-[10px] uppercase tracking-widest text-gray-500 font-medium">Risk & P&L</span>
 
-          {/* Risk Amount */}
           <div>
             <label className="text-[10px] text-gray-500 uppercase tracking-widest block mb-1.5">Risk Amount ($)</label>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-bold">$</span>
-              <input
-                type="number"
-                value={form.riskAmount}
-                onChange={e => set('riskAmount', e.target.value)}
-                onWheel={e => e.target.blur()}
-                placeholder="How much are you risking?"
-                className={inputCls + ' pl-7'}
-              />
+              <input type="number" value={form.riskAmount} onChange={e => set('riskAmount', e.target.value)} onWheel={e => e.target.blur()} placeholder="How much are you risking?" className={inputCls + ' pl-7'} />
             </div>
           </div>
 
-          {/* Estimated PnL Preview */}
-          {estimatedPnl && (
-            <div className="grid grid-cols-3 gap-2">
+          {estimatedPnl && form.outcome && (
+            <div>
+              {form.outcome === 'Win' && (
+                <div className="bg-emerald-500/8 border border-emerald-500/20 rounded-xl p-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-emerald-500/60 text-[10px] uppercase tracking-widest mb-0.5">Estimated Profit</p>
+                    <p className="text-emerald-400 font-black text-xl">+${estimatedPnl.win.toFixed(2)}</p>
+                  </div>
+                  <span className="text-emerald-500/30 text-3xl font-black">1:{rr}</span>
+                </div>
+              )}
+              {form.outcome === 'Loss' && (
+                <div className="bg-red-500/8 border border-red-500/20 rounded-xl p-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-red-500/60 text-[10px] uppercase tracking-widest mb-0.5">Estimated Loss</p>
+                    <p className="text-red-400 font-black text-xl">-${Math.abs(estimatedPnl.loss).toFixed(2)}</p>
+                  </div>
+                  <span className="text-red-500/30 text-3xl">✗</span>
+                </div>
+              )}
+              {form.outcome === 'Breakeven' && (
+                <div className="bg-gray-500/8 border border-gray-500/20 rounded-xl p-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-gray-500/60 text-[10px] uppercase tracking-widest mb-0.5">Breakeven</p>
+                    <p className="text-gray-400 font-black text-xl">$0.00</p>
+                  </div>
+                  <span className="text-gray-500/30 text-3xl">→</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {estimatedPnl && !form.outcome && (
+            <div className="grid grid-cols-2 gap-2">
               <div className="bg-emerald-500/8 border border-emerald-500/20 rounded-xl p-2.5 text-center">
                 <p className="text-emerald-500/50 text-[10px] uppercase tracking-wider mb-1">If Win</p>
                 <p className="text-emerald-400 font-black text-base">+${estimatedPnl.win.toFixed(2)}</p>
-              </div>
-              <div className="bg-[#111116] border border-[#2a2a2e] rounded-xl p-2.5 text-center">
-                <p className="text-gray-500 text-[10px] uppercase tracking-wider mb-1">R:R</p>
-                <p className="text-white font-black text-base">1:{rr}</p>
               </div>
               <div className="bg-red-500/8 border border-red-500/20 rounded-xl p-2.5 text-center">
                 <p className="text-red-500/50 text-[10px] uppercase tracking-wider mb-1">If Loss</p>
@@ -615,28 +673,18 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
             </div>
           )}
 
-          {/* Actual PnL from broker */}
           <div>
             <label className="text-[10px] text-gray-500 uppercase tracking-widest block mb-1.5">
               Actual P&L from Broker
-              {form.outcome && form.riskAmount && rrNum && !form.manualPnl && (
-                <span className="ml-2 text-violet-400 normal-case">
-                  (auto: {form.outcome === 'Win' ? '+$' + (parseFloat(form.riskAmount) * rrNum).toFixed(2) : form.outcome === 'Loss' ? '-$' + form.riskAmount : '$0'})
-                </span>
+              {autoPnlHint && !form.manualPnl && (
+                <span className="ml-2 text-violet-400 normal-case">(auto: {autoPnlHint})</span>
               )}
             </label>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-bold">$</span>
-              <input
-                type="number"
-                value={form.manualPnl}
-                onChange={e => set('manualPnl', e.target.value)}
-                onWheel={e => e.target.blur()}
-                placeholder="Override with exact broker P&L…"
-                className={inputCls + ' pl-7 text-lg font-bold'}
-              />
+              <input type="number" value={form.manualPnl} onChange={e => set('manualPnl', e.target.value)} onWheel={e => e.target.blur()} placeholder="Enter amount — sign applied automatically" className={inputCls + ' pl-7 text-lg font-bold'} />
             </div>
-            <p className="text-gray-600 text-[10px] mt-1">Leave blank to auto-calculate from Risk × R:R</p>
+            <p className="text-gray-600 text-[10px] mt-1">Leave blank to auto-calculate · sign (±) is applied from selected outcome</p>
           </div>
         </div>
 
@@ -646,10 +694,8 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
             <div className="relative rounded-xl overflow-hidden border border-[#27272a] group">
               <img src={form.screenshot.previewUrl} alt="Trade screenshot" className="w-full max-h-52 object-cover" />
               <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-                <button type="button" onClick={() => fileRef.current?.click()}
-                  className="text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-lg backdrop-blur-sm">Replace</button>
-                <button type="button" onClick={() => set('screenshot', null)}
-                  className="text-xs bg-red-500/20 hover:bg-red-500/40 text-red-400 px-3 py-1.5 rounded-lg backdrop-blur-sm">Remove</button>
+                <button type="button" onClick={() => fileRef.current?.click()} className="text-xs bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-lg backdrop-blur-sm">Replace</button>
+                <button type="button" onClick={() => set('screenshot', null)} className="text-xs bg-red-500/20 hover:bg-red-500/40 text-red-400 px-3 py-1.5 rounded-lg backdrop-blur-sm">Remove</button>
               </div>
               <div className="absolute bottom-2 right-2 bg-black/60 text-gray-300 text-[10px] px-2 py-1 rounded-md backdrop-blur-sm">
                 {(form.screenshot.file.size / 1024).toFixed(0)} KB
@@ -674,29 +720,17 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
 
         {/* Tags */}
         <Field label="Tags">
-          <input
-            value={form.tags}
-            onChange={e => set('tags', e.target.value)}
-            placeholder="FOMC, confluence, revenge-trade…"
-            className={inputCls}
-          />
+          <input value={form.tags} onChange={e => set('tags', e.target.value)} placeholder="FOMC, confluence, revenge-trade…" className={inputCls} />
         </Field>
 
         {/* Notes */}
         <Field label="Notes">
-          <textarea
-            value={form.notes}
-            onChange={e => set('notes', e.target.value)}
-            rows={3}
-            placeholder="Setup rationale, emotions, lessons learned…"
-            className={inputCls + ' resize-none'}
-          />
+          <textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={3} placeholder="Setup rationale, emotions, lessons learned…" className={inputCls + ' resize-none'} />
         </Field>
 
         {/* Actions */}
         <div className="flex gap-3 pt-1 pb-1">
-          <Button variant="secondary" className="flex-1"
-            onClick={() => { setForm(initialForm); setSymQuery(''); onClose(); }}>
+          <Button variant="secondary" className="flex-1" onClick={() => { setForm(initialForm); setSymQuery(''); onClose(); }}>
             Cancel
           </Button>
           <Button className="flex-1" onClick={handleSubmit} disabled={loading}>

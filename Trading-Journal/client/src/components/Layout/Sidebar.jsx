@@ -30,7 +30,7 @@ const Sidebar = () => {
         {!collapsed && (
           <div className="flex items-center gap-2">
             <Zap size={22} className="text-purple-500" />
-            <span className="text-white font-bold text-lg tracking-wide">TradeZella</span>
+            <span className="text-white font-bold text-lg tracking-wide">Trade Maniac</span>
           </div>
         )}
         <button

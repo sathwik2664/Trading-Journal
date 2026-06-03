@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react';
+import { useAccount } from '../context/AccountContext';
 import {
   getTrades, createTrade,
   updateTrade, deleteTrade,
-  getTradeScreenshot,
+  getTradeScreenshot, getTradeImages,
 } from '../services/tradeService';
 
 export const useTrades = () => {
   const [trades,  setTrades]  = useState([]);
   const [loading, setLoading] = useState(true);
+  const { applyTradePnl } = useAccount();
 
   const fetchTrades = async () => {
     try {
@@ -24,8 +26,11 @@ export const useTrades = () => {
 
   const addTrade = async (data) => {
     const res = await createTrade(data);
-    // Add to list — screenshot excluded from list response
     setTrades(prev => [res.data, ...prev]);
+    if (res.data.pnl !== null && res.data.pnl !== undefined) {
+      await applyTradePnl(res.data.pnl, res.data._id, res.data.symbol);
+    }
+    return res.data;
   };
 
   const editTrade = async (id, data) => {
@@ -43,5 +48,10 @@ export const useTrades = () => {
     return res.data.screenshot;
   };
 
-  return { trades, loading, addTrade, editTrade, removeTrade, fetchTrades, fetchScreenshot };
+  const fetchTradeImages = async (id) => {
+    const res = await getTradeImages(id);
+    return res.data.images;
+  };
+
+  return { trades, loading, addTrade, editTrade, removeTrade, fetchTrades, fetchScreenshot, fetchTradeImages };
 };
