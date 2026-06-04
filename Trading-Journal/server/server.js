@@ -24,8 +24,10 @@ app.use('/api/templates', require('./routes/templates'));
 app.use('/api/checklist', require('./routes/preMarketChecklistRoutes'));
 app.use('/api/account',   require('./routes/account'));
 app.use('/api/setups',    require('./routes/setups'));
-app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
+
 app.use(errorHandler);
+
+app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 
 app.listen(process.env.PORT, () => {
   console.log(`Server running on port ${process.env.PORT}`);
