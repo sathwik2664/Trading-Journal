@@ -1,7 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { AccountProvider } from './context/AccountContext';
-import { ThemeProvider } from './context/Themecontext';
+import { ThemeProvider } from './context/ThemeContext';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import Layout from './components/Layout/Layout';
 import Login from './pages/Login';
