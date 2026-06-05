@@ -9,20 +9,20 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Restore session + JWT token on page load
+  // Restore session on page load — sessionStorage only (clears on tab close)
   useEffect(() => {
-    const stored = localStorage.getItem(SESSION_KEY);
+    const stored = sessionStorage.getItem(SESSION_KEY);
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
         setUser(parsed);
-        const token = localStorage.getItem('token');
+        const token = sessionStorage.getItem('token');
         if (token) {
           api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         }
       } catch {
-        localStorage.removeItem(SESSION_KEY);
-        localStorage.removeItem('token');
+        sessionStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem('token');
       }
     }
     setLoading(false);
@@ -33,19 +33,19 @@ export const AuthProvider = ({ children }) => {
 
     // Step 1 — set local session immediately so UI unlocks
     const userData = { email, name: 'Sathwik' };
-    localStorage.setItem(SESSION_KEY, JSON.stringify(userData));
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(userData));
     setUser(userData);
 
     // Step 2 — get real JWT from backend so trade API calls work
     try {
       const { data } = await api.post('/auth/login', { email, password });
       if (data.success && data.token) {
-        localStorage.setItem('token', data.token);
+        sessionStorage.setItem('token', data.token);
         api.defaults.headers.common['Authorization'] = `Bearer ${data.token}`;
         return { success: true, user: data.user || userData };
       }
     } catch {
-      // Backend login failed — user might not exist yet, try registering
+      // Backend login failed — try registering
       try {
         const { data } = await api.post('/auth/register', {
           name: 'Sathwik',
@@ -53,7 +53,7 @@ export const AuthProvider = ({ children }) => {
           password,
         });
         if (data.success && data.token) {
-          localStorage.setItem('token', data.token);
+          sessionStorage.setItem('token', data.token);
           api.defaults.headers.common['Authorization'] = `Bearer ${data.token}`;
           return { success: true, user: data.user || userData };
         }
@@ -66,8 +66,8 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const logout = useCallback(async () => {
-    localStorage.removeItem(SESSION_KEY);
-    localStorage.removeItem('token');
+    sessionStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem('token');
     delete api.defaults.headers.common['Authorization'];
     setUser(null);
   }, []);

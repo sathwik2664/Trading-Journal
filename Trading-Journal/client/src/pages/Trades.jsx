@@ -4,6 +4,7 @@
  */
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useTrades } from '../hooks/useTrades';
+import { useAccount } from '../context/AccountContext';
 import AddTradeModal from '../components/Trades/AddTradeModal';
 import Loader from '../components/shared/Loader';
 import { formatCurrency } from '../utils/helpers';
@@ -805,6 +806,7 @@ function StatCard({ label, value, color, sub, icon: Icon, spark, delay = 0, anim
 ═════════════════════════════════════════════════════════════ */
 const Trades = () => {
 const { trades, loading, addTrade, editTrade, removeTrade: deleteTrade, fetchTradeImages } = useTrades();
+const { applyTradePnl, removeTradePnl } = useAccount();
   const [modalOpen,    setModalOpen]    = useState(false);
   const [filter,       setFilter]       = useState('All');
   const [search,       setSearch]       = useState('');
@@ -915,10 +917,12 @@ const tid = trade._id ?? trade.id ?? `${trade.symbol}_${trade.date}_${trade.pnl}
       if (typeof deleteTrade === 'function') {
         deleteTrade(trade._id || trade.id);
       }
+      if (trade._id || trade.id) removeTradePnl(trade._id || trade.id); // ← ADD THIS LINE
+      // Collapse if expanded
       // Collapse if expanded
       setExpanded(cur => cur === tid ? null : cur);
     }, 320);
-  }, [tradeNotes, tradeTags, tradeImages, deleteTrade]);
+  }, [tradeNotes, tradeTags, tradeImages, deleteTrade, removeTradePnl]);
 
   /* ── Restore from bin ── */
   const handleRestore = useCallback((tid) => {
@@ -994,9 +998,10 @@ const handleBulkDelete = useCallback(() => {
       return [...prev, { ...t, tid, deletedAt: new Date().toISOString(), notes: tradeNotes[tid] || '', tags: tradeTags[tid] || [], imgs: tradeImages[tid] || [] }];
     });
     if (typeof deleteTrade === 'function') deleteTrade(t._id || t.id);
+    if (t._id || t.id) removeTradePnl(t._id || t.id); // ← ADD THIS LINE
   });
   setSelected(new Set());
-}, [selected, filteredTrades, tradeNotes, tradeTags, tradeImages, deleteTrade]);
+}, [selected, filteredTrades, tradeNotes, tradeTags, tradeImages, deleteTrade, removeTradePnl]);
 
 
   /* ── Stats ── */
@@ -1141,6 +1146,7 @@ const handleBulkDelete = useCallback(() => {
 const handleAdd = useCallback(async (trade) => {
   const saved = await addTrade(trade);
   if (saved?.pnl > 0) setTimeout(spawnConfetti, 100);
+  if (saved?._id) await applyTradePnl(saved.pnl, saved._id, saved.symbol); // ← ADD THIS LINE
   const src = saved?.screenshot;
   if (src && saved?._id) {
     const image = {
@@ -1154,7 +1160,7 @@ const handleAdd = useCallback(async (trade) => {
       [saved._id]: [image],
     }));
   }
-}, [addTrade]);
+}, [addTrade, applyTradePnl]);
 
   if (loading) return <Loader />;
 

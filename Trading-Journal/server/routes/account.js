@@ -3,17 +3,15 @@ const router  = express.Router();
 const {
   getAccount,
   updateAccount,
-  updateBalance,
-  deposit,
-  withdraw,
   applyTradePnl,
+  removeTradePnl,
+  recalculate,
 } = require('../controllers/accountController');
 
-router.get('/',            getAccount);
-router.put('/',            updateAccount);
-router.put('/balance',     updateBalance);
-router.post('/deposit',    deposit);
-router.post('/withdraw',   withdraw);
-router.post('/trade-pnl',  applyTradePnl);
+router.get('/',                      getAccount);
+router.put('/',                      updateAccount);
+router.post('/trade-pnl',            applyTradePnl);
+router.delete('/trade-pnl/:tradeId', removeTradePnl);
+router.post('/recalculate',          recalculate);
 
 module.exports = router;

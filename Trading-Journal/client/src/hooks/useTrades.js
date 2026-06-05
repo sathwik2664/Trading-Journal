@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { useAccount } from '../context/AccountContext';
 import {
   getTrades, createTrade,
   updateTrade, deleteTrade,
@@ -9,7 +8,6 @@ import {
 export const useTrades = () => {
   const [trades,  setTrades]  = useState([]);
   const [loading, setLoading] = useState(true);
-  const { applyTradePnl } = useAccount();
 
   const fetchTrades = async () => {
     try {
@@ -27,10 +25,7 @@ export const useTrades = () => {
   const addTrade = async (data) => {
     const res = await createTrade(data);
     setTrades(prev => [res.data, ...prev]);
-    if (res.data.pnl !== null && res.data.pnl !== undefined) {
-      await applyTradePnl(res.data.pnl, res.data._id, res.data.symbol);
-    }
-    return res.data;
+    return res.data;  // ← just return, let the caller handle applyTradePnl
   };
 
   const editTrade = async (id, data) => {

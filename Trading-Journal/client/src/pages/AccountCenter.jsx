@@ -1,9 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import {
-  User, DollarSign, Shield, Bell,
-  Save, Edit2, Check, X, ChevronRight, BarChart2,
-  ArrowUpRight, ArrowDownRight, AlertTriangle,
-  Plus, Minus, History, Target, Brain, Flame,
+  User, Shield,
+  Save, Check, X, ChevronRight,
+  AlertTriangle,
+  Plus, Minus, Target, Brain, Flame,
   Sparkles, AlertCircle, CheckCircle2, Circle,
   RefreshCw, Award, LogOut,
 } from 'lucide-react';
@@ -70,14 +70,12 @@ if (typeof document !== 'undefined' && !document.getElementById('__ac_s__')) {
 
 /* ── Constants ── */
 const TABS = [
-  { id: 'profile',       label: 'Profile',        icon: User        },
-  { id: 'account',       label: 'Account',         icon: DollarSign  },
-  { id: 'goals',         label: 'Goals',           icon: Target      },
-  { id: 'habits',        label: 'Daily Habits',    icon: Flame       },
-  { id: 'mindset',       label: 'Mindset',         icon: Brain       },
-  { id: 'mistakes',      label: 'Mistakes',        icon: AlertCircle },
-  { id: 'risk',          label: 'Risk Rules',      icon: Shield      },
-  { id: 'notifications', label: 'Notifications',   icon: Bell        },
+  { id: 'profile',  label: 'Profile',      icon: User        },
+  { id: 'goals',    label: 'Goals',         icon: Target      },
+  { id: 'habits',   label: 'Daily Habits',  icon: Flame       },
+  { id: 'mindset',  label: 'Mindset',       icon: Brain       },
+  { id: 'mistakes', label: 'Mistakes',      icon: AlertCircle },
+  { id: 'risk',     label: 'Risk Rules',    icon: Shield      },
 ];
 
 const AVATAR_COLORS = ['#6366f1','#ec4899','#10b981','#f59e0b','#3b82f6','#ef4444','#06b6d4','#84cc16'];
@@ -107,10 +105,6 @@ const COMMON_MISTAKES = [
   'Skipping entry rules','Oversizing position','Early exit','Late entry',
   'Trading news blindly','Not journaling',
 ];
-
-/* ── Helpers ── */
-const fmt       = n => n == null ? '—' : `$${Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2})}`;
-const fmtSigned = n => n == null ? '—' : `${n>=0?'+':'−'}${fmt(n).replace('$','')}`;
 
 /* ── Reusable UI ── */
 const Field = ({ label, children }) => (
@@ -143,19 +137,6 @@ const Select = ({ label, value, onChange, options }) => (
       {options.map(o => <option key={o} value={o} style={{background:'#111317'}}>{o}</option>)}
     </select>
   </Field>
-);
-
-const Toggle = ({ checked, onChange }) => (
-  <button onClick={()=>onChange(!checked)} style={{
-    position:'relative', width:40, height:22, borderRadius:11, flexShrink:0, cursor:'pointer',
-    background:checked?'#6366f1':'#1f2229', border:'none', transition:'background .15s',
-  }}>
-    <span style={{
-      position:'absolute', top:3, width:16, height:16, borderRadius:'50%', background:'#fff',
-      transition:'transform .15s', transform:checked?'translateX(21px)':'translateX(3px)',
-      boxShadow:'0 1px 4px rgba(0,0,0,.4)', display:'block',
-    }}/>
-  </button>
 );
 
 const Card = ({ children, style }) => (
@@ -200,60 +181,6 @@ const LogoutModal = ({ onConfirm, onCancel }) => (
   </div>
 );
 
-/* ── Transaction Modal ── */
-const TxModal = ({ type, currentBalance, onClose, onConfirm }) => {
-  const [amount,  setAmount]  = useState('');
-  const [desc,    setDesc]    = useState('');
-  const [err,     setErr]     = useState('');
-  const [loading, setLoading] = useState(false);
-  const isDeposit = type === 'deposit';
-
-  const submit = async () => {
-    const n = parseFloat(amount);
-    if (!n || n <= 0)                    { setErr('Enter a valid amount.'); return; }
-    if (!isDeposit && n > currentBalance){ setErr('Exceeds available balance.'); return; }
-    setLoading(true); setErr('');
-    try { await onConfirm(n, desc || (isDeposit ? 'Deposit' : 'Withdrawal')); onClose(); }
-    catch { setErr('Something went wrong.'); }
-    finally { setLoading(false); }
-  };
-
-  return (
-    <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{ position:'fixed',inset:0,zIndex:50,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,.75)',backdropFilter:'blur(8px)',padding:16 }}>
-      <div style={{ background:'#0d0f14',border:'1px solid #1a1d24',borderRadius:18,width:'100%',maxWidth:360,padding:24,boxShadow:'0 32px 80px rgba(0,0,0,.8)' }}>
-        <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20 }}>
-          <div style={{ display:'flex',alignItems:'center',gap:10 }}>
-            <div style={{ width:36,height:36,borderRadius:10,background:isDeposit?'rgba(16,185,129,.12)':'rgba(239,68,68,.12)',display:'flex',alignItems:'center',justifyContent:'center' }}>
-              {isDeposit ? <Plus size={16} color="#10b981"/> : <Minus size={16} color="#ef4444"/>}
-            </div>
-            <span style={{ fontFamily:'Syne,sans-serif',fontSize:15,fontWeight:700,color:'#e8eaf0' }}>{isDeposit?'Add Funds':'Withdraw'}</span>
-          </div>
-          <button onClick={onClose} style={{ background:'none',border:'none',color:'#4b5263',cursor:'pointer' }}><X size={15}/></button>
-        </div>
-        <div style={{ marginBottom:14 }}>
-          <div style={{ display:'flex',alignItems:'center',background:'#111317',border:'1px solid #1f2229',borderRadius:12,padding:'12px 14px',gap:8 }}>
-            <span style={{ color:'#4b5263',fontSize:18,fontWeight:700 }}>$</span>
-            <input autoFocus type="number" value={amount} onChange={e=>{setAmount(e.target.value);setErr('');}} onKeyDown={e=>e.key==='Enter'&&submit()} placeholder="0.00"
-              style={{ flex:1,background:'transparent',color:'#e8eaf0',fontFamily:'DM Mono,monospace',fontSize:20,fontWeight:700,outline:'none',border:'none' }}/>
-          </div>
-          {!isDeposit && <p style={{ fontFamily:'Manrope,sans-serif',fontSize:10,color:'#4b5263',marginTop:5 }}>Available: {fmt(currentBalance)}</p>}
-        </div>
-        <div style={{ marginBottom:16 }}>
-          <input type="text" value={desc} onChange={e=>setDesc(e.target.value)} placeholder={isDeposit?'Note (optional)':'Reason (optional)'}
-            style={{ width:'100%',background:'#111317',border:'1px solid #1f2229',borderRadius:10,padding:'9px 13px',color:'#e8eaf0',fontFamily:'Manrope,sans-serif',fontSize:12,outline:'none',boxSizing:'border-box' }}/>
-        </div>
-        {err && <p style={{ fontFamily:'Manrope,sans-serif',fontSize:11,color:'#ef4444',marginBottom:12 }}>{err}</p>}
-        <div style={{ display:'flex',gap:10 }}>
-          <button onClick={onClose} className="ac-btn" style={{ flex:1,background:'#1a1d24',color:'#6b7280' }}>Cancel</button>
-          <button onClick={submit} disabled={loading} className="ac-btn" style={{ flex:1,background:isDeposit?'#10b981':'#ef4444',color:'#fff',opacity:loading?.6:1 }}>
-            {loading ? <span style={{ width:13,height:13,borderRadius:'50%',border:'2px solid rgba(255,255,255,.3)',borderTopColor:'#fff',animation:'ac-spin .7s linear infinite',display:'inline-block' }}/> : isDeposit ? 'Add Funds' : 'Withdraw'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 /* ── AI Coach Modal ── */
 const AICoachModal = ({ account, draft, onClose }) => {
   const [text,    setText]    = useState('');
@@ -262,11 +189,11 @@ const AICoachModal = ({ account, draft, onClose }) => {
 
   const run = async () => {
     setLoading(true); setText(''); setErr('');
-    const pnl    = account.currentBalance - account.startingBalance;
-    const pnlPct = ((pnl / account.startingBalance) * 100).toFixed(1);
+    const tradePnl = (account.transactions||[]).filter(t=>t.type==='trade_pnl').reduce((s,t)=>s+t.amount,0);
+    const pnlPct   = account.currentBalance > 0 ? ((tradePnl / account.currentBalance) * 100).toFixed(1) : '0.0';
     const prompt = `You are a professional trading performance coach. Analyze this trader's profile and give specific, actionable coaching.
 
-Account: Starting $${account.startingBalance} → Current $${account.currentBalance} (${pnlPct}% ${pnl>=0?'gain':'loss'})
+Account: Current $${account.currentBalance} | Trade P&L ${tradePnl >= 0 ? '+' : ''}$${tradePnl.toFixed(2)} (${pnlPct}% return)
 Risk per trade: ${draft.riskPerTrade}% | Max daily loss: ${draft.maxDailyLoss}% | Profit target: ${draft.targetProfit}%
 Transactions: ${(account.transactions||[]).length} total
 Broker: ${draft.broker || 'Unknown'} | Account type: ${draft.accountType || 'Unknown'}
@@ -346,26 +273,19 @@ Format each: **[Category]**: coaching advice. Be direct, personal, reference the
    MAIN COMPONENT
 ══════════════════════════════════════ */
 export default function AccountCenter() {
-  const { account, updateAccount, updateBalance, updateNotification, deposit, withdraw } = useAccount();
-
-  // ── Pull real user from AuthContext ──
+  const { account, updateAccount } = useAccount();
   const { user, logout } = useAuth();
 
   const [tab,         setTab]        = useState('profile');
   const [saved,       setSaved]      = useState(false);
-  const [editBal,     setEditBal]    = useState(false);
-  const [balDraft,    setBalDraft]   = useState(String(account.currentBalance));
-  const [txModal,     setTxModal]    = useState(null);
   const [aiModal,     setAiModal]    = useState(false);
   const [logoutModal, setLogoutModal]= useState(false);
 
-  // ── Initialise draft from account, but pre-fill name/email from real user ──
   const [draft, setDraft] = useState({
     ...account,
-    // If account doesn't have name/email yet, seed from auth user
-    name:    account.name    || user?.name  || '',
-    email:   account.email   || user?.email || '',
-    initials:(account.initials || (user?.name ? user.name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2) : '')),
+    name:        account.name        || user?.name  || 'Sathwik Reddy',
+    email:       account.email       || user?.email || '',
+    initials:    account.initials    || 'SR',
     avatarColor: account.avatarColor || '#6366f1',
   });
 
@@ -390,8 +310,8 @@ export default function AccountCenter() {
   const [moodNote,  setMoodNote]  = useState('');
 
   /* ── Mistakes ── */
-  const [mistakes,    setMistakes]    = useState(COMMON_MISTAKES.slice(0,6).map((m,i)=>({ id:`m${i}`, label:m, count:0 })));
-  const [newMistake,  setNewMistake]  = useState('');
+  const [mistakes,    setMistakes]  = useState(COMMON_MISTAKES.slice(0,6).map((m,i)=>({ id:`m${i}`, label:m, count:0 })));
+  const [newMistake,  setNewMistake]= useState('');
 
   /* ── Handlers ── */
   const handleSave = async () => {
@@ -400,29 +320,7 @@ export default function AccountCenter() {
     setTimeout(() => setSaved(false), 2000);
   };
 
-  const handleBalSave = async () => {
-    const n = parseFloat(balDraft.replace(/,/g, ''));
-    if (!isNaN(n) && n >= 0) await updateBalance(n);
-    setEditBal(false);
-  };
-
-  const handleLogout = async () => {
-    await logout();
-    // AuthContext.logout clears the token + user.
-    // ProtectedRoute will then redirect to /login automatically.
-  };
-
-  /* ── Derived values ── */
-  const pnl      = account.currentBalance - account.startingBalance;
-  const pnlPct   = ((pnl / account.startingBalance) * 100).toFixed(2);
-  const isProfit = pnl >= 0;
-
-  const txTotals = useMemo(() => (account.transactions || []).reduce((acc, tx) => {
-    if (tx.type === 'deposit')    acc.deposited += tx.amount;
-    if (tx.type === 'withdrawal') acc.withdrawn += Math.abs(tx.amount);
-    if (tx.type === 'trade_pnl')  acc.tradePnl  += tx.amount;
-    return acc;
-  }, { deposited:0, withdrawn:0, tradePnl:0 }), [account.transactions]);
+  const handleLogout = async () => { await logout(); };
 
   const habitsCompleted = habits.filter(h => h.done).length;
 
@@ -439,7 +337,6 @@ export default function AccountCenter() {
   ════════════════════════════════ */
   return (
     <div style={{ minHeight:'100vh', background:'#080a0e', fontFamily:'Manrope,sans-serif', color:'#e8eaf0' }}>
-      {/* Ambient glow */}
       <div style={{ position:'fixed',top:-80,right:-80,width:400,height:400,borderRadius:'50%',background:'radial-gradient(circle,rgba(99,102,241,.06) 0%,transparent 70%)',pointerEvents:'none',zIndex:0 }}/>
 
       <div style={{ position:'relative',zIndex:1,maxWidth:1100,margin:'0 auto',padding:'28px 24px 60px' }}>
@@ -453,7 +350,6 @@ export default function AccountCenter() {
             <div>
               <h1 style={{ fontFamily:'Syne,sans-serif',fontSize:26,fontWeight:800,color:'#e8eaf0',margin:0,letterSpacing:'-0.5px' }}>Account Center</h1>
               <p style={{ fontSize:12,color:'#4b5263',marginTop:4 }}>
-                {/* Show the real logged-in user's name + email */}
                 Signed in as <span style={{ color:'#6366f1', fontFamily:'DM Mono,monospace' }}>{user?.name || draft.name || 'Trader'}</span>
                 {user?.email && <span style={{ color:'#4b5263' }}> · {user.email}</span>}
               </p>
@@ -465,7 +361,6 @@ export default function AccountCenter() {
               <button onClick={handleSave} className="ac-btn" style={{ background:saved?'rgba(16,185,129,.15)':'#6366f1',border:saved?'1px solid rgba(16,185,129,.3)':'none',color:saved?'#10b981':'#fff',fontSize:11 }}>
                 {saved ? <><Check size={13}/>Saved!</> : <><Save size={13}/>Save Changes</>}
               </button>
-              {/* ── LOGOUT BUTTON ── */}
               <button onClick={() => setLogoutModal(true)} className="ac-logout-btn">
                 <LogOut size={13}/> Sign out
               </button>
@@ -496,8 +391,6 @@ export default function AccountCenter() {
                   )}
                 </button>
               ))}
-
-              {/* Sidebar logout (secondary) */}
               <div style={{ borderTop:'1px solid #1a1d24', marginTop:6, paddingTop:6 }}>
                 <button onClick={() => setLogoutModal(true)} className="ac-tab" style={{
                   width:'100%',display:'flex',alignItems:'center',gap:10,padding:'9px 12px',
@@ -520,10 +413,8 @@ export default function AccountCenter() {
               <Card>
                 <CardTitle icon={User} title="Profile Information" subtitle="Your personal trading identity"/>
                 <div style={{ display:'flex',alignItems:'center',gap:20,marginBottom:24,paddingBottom:20,borderBottom:'1px solid #1a1d24' }}>
-                  <div style={{ position:'relative' }}>
-                    <div style={{ width:72,height:72,borderRadius:18,background:draft.avatarColor||'#6366f1',display:'flex',alignItems:'center',justifyContent:'center',fontSize:24,fontWeight:800,color:'#fff',fontFamily:'Syne,sans-serif' }}>
-                      {draft.initials || draft.name?.[0]?.toUpperCase() || 'T'}
-                    </div>
+                  <div style={{ width:72,height:72,borderRadius:18,background:draft.avatarColor||'#6366f1',display:'flex',alignItems:'center',justifyContent:'center',fontSize:24,fontWeight:800,color:'#fff',fontFamily:'Syne,sans-serif' }}>
+                    {draft.initials || draft.name?.[0]?.toUpperCase() || 'T'}
                   </div>
                   <div>
                     <div style={{ fontFamily:'Syne,sans-serif',fontSize:16,fontWeight:700,color:'#e8eaf0',marginBottom:2 }}>{draft.name}</div>
@@ -541,22 +432,20 @@ export default function AccountCenter() {
                 </div>
                 <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:14 }}>
                   <Input label="Display Name"  value={draft.name}     onChange={v=>set('name',v)}    placeholder="Your name"/>
-                  <Input label="Initials"       value={draft.initials} onChange={v=>set('initials',v.toUpperCase().slice(0,2))} placeholder="AB"/>
+                  <Input label="Initials"       value={draft.initials} onChange={v=>set('initials',v.toUpperCase().slice(0,2))} placeholder="SR"/>
                   <div style={{ gridColumn:'1/-1' }}>
                     <Input label="Email Address" value={draft.email} onChange={v=>set('email',v)} type="email" placeholder="you@example.com"/>
                   </div>
                   <Input label="Account Type" value={draft.accountType||''} onChange={v=>set('accountType',v)} placeholder="Live / Paper"/>
-                  <Select label="Timezone" value={draft.timezone||'America/New_York'} onChange={v=>set('timezone',v)} options={TIMEZONES}/>
+                  <Select label="Timezone" value={draft.timezone||'Asia/Kolkata'} onChange={v=>set('timezone',v)} options={TIMEZONES}/>
                 </div>
-
-                {/* ── Account info from real auth user ── */}
                 <div style={{ marginTop:20,paddingTop:16,borderTop:'1px solid #1a1d24' }}>
                   <p style={{ fontFamily:'Manrope,sans-serif',fontSize:10,fontWeight:700,color:'#4b5263',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:12 }}>Authenticated Account</p>
                   <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:10 }}>
                     {[
-                      { label:'Name',     value: user?.name      || '—' },
-                      { label:'Email',    value: user?.email     || '—' },
-                      { label:'Role',     value: user?.role      || '—' },
+                      { label:'Name',        value: user?.name  || '—' },
+                      { label:'Email',        value: user?.email || '—' },
+                      { label:'Role',         value: user?.role  || '—' },
                       { label:'Member since', value: user?.createdAt ? new Date(user.createdAt).toLocaleDateString('en-US',{month:'short',year:'numeric'}) : '—' },
                     ].map(({ label, value }) => (
                       <div key={label} style={{ background:'#111317',border:'1px solid #1f2229',borderRadius:10,padding:'10px 12px' }}>
@@ -567,129 +456,6 @@ export default function AccountCenter() {
                   </div>
                 </div>
               </Card>
-            )}
-
-            {/* ══ ACCOUNT ══ */}
-            {tab === 'account' && (
-              <>
-                <Card>
-                  <CardTitle icon={DollarSign} title="Account Balance" subtitle="Live balance — editable and tracked"/>
-                  <div style={{ background:'#111317',border:'1px solid #1f2229',borderRadius:14,padding:20,marginBottom:14 }}>
-                    <div style={{ display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:18 }}>
-                      <div>
-                        <p style={{ fontFamily:'DM Mono,monospace',fontSize:10,color:'#4b5263',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6 }}>Current Balance</p>
-                        {editBal ? (
-                          <div style={{ display:'flex',alignItems:'center',gap:8 }}>
-                            <span style={{ color:'#4b5263',fontSize:24 }}>$</span>
-                            <input autoFocus type="number" value={balDraft} onChange={e=>setBalDraft(e.target.value)}
-                              onKeyDown={e=>{if(e.key==='Enter')handleBalSave();if(e.key==='Escape')setEditBal(false);}}
-                              style={{ background:'transparent',color:'#e8eaf0',fontFamily:'Syne,sans-serif',fontSize:32,fontWeight:800,outline:'none',border:'none',borderBottom:'1px solid #6366f1',width:180 }}/>
-                            <button onClick={handleBalSave}         style={{ background:'none',border:'none',color:'#10b981',cursor:'pointer' }}><Check size={18}/></button>
-                            <button onClick={()=>setEditBal(false)} style={{ background:'none',border:'none',color:'#ef4444',cursor:'pointer' }}><X size={18}/></button>
-                          </div>
-                        ) : (
-                          <div style={{ display:'flex',alignItems:'center',gap:10 }}>
-                            <span style={{ fontFamily:'Syne,sans-serif',fontSize:36,fontWeight:800,color:'#e8eaf0',letterSpacing:'-1px' }}>
-                              ${account.currentBalance.toLocaleString('en-US',{minimumFractionDigits:2})}
-                            </span>
-                            <button onClick={()=>{setEditBal(true);setBalDraft(String(account.currentBalance));}}
-                              style={{ width:28,height:28,borderRadius:8,background:'#1a1d24',border:'none',color:'#4b5263',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',transition:'all .15s' }}
-                              onMouseEnter={e=>{e.currentTarget.style.background='rgba(99,102,241,.15)';e.currentTarget.style.color='#6366f1';}}
-                              onMouseLeave={e=>{e.currentTarget.style.background='#1a1d24';e.currentTarget.style.color='#4b5263';}}>
-                              <Edit2 size={12}/>
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                      <div style={{ display:'flex',alignItems:'center',gap:6,padding:'5px 12px',borderRadius:20,background:isProfit?'rgba(16,185,129,.1)':'rgba(239,68,68,.1)',color:isProfit?'#10b981':'#ef4444',fontFamily:'DM Mono,monospace',fontSize:12,fontWeight:700 }}>
-                        {isProfit?<ArrowUpRight size={13}/>:<ArrowDownRight size={13}/>}
-                        {isProfit?'+':''}{pnlPct}%
-                      </div>
-                    </div>
-                    <div style={{ display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:14 }}>
-                      {[
-                        { label:'Starting',  value:fmt(account.startingBalance),                  color:'#6b7280'                           },
-                        { label:'Total P&L', value:fmtSigned(pnl),                                color:isProfit?'#10b981':'#ef4444'         },
-                        { label:'P&L %',     value:`${isProfit?'+':''}${pnlPct}%`,                color:isProfit?'#10b981':'#ef4444'         },
-                      ].map(({label,value,color})=>(
-                        <div key={label} style={{ background:'#0d0f14',border:'1px solid #1a1d24',borderRadius:10,padding:'10px 12px',textAlign:'center' }}>
-                          <div style={{ fontFamily:'Manrope,sans-serif',fontSize:9,color:'#4b5263',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:4 }}>{label}</div>
-                          <div style={{ fontFamily:'DM Mono,monospace',fontSize:14,fontWeight:700,color }}>{value}</div>
-                        </div>
-                      ))}
-                    </div>
-                    <div style={{ display:'flex',gap:10 }}>
-                      <button onClick={()=>setTxModal('deposit')} className="ac-btn" style={{ flex:1,justifyContent:'center',background:'rgba(16,185,129,.1)',border:'1px solid rgba(16,185,129,.2)',color:'#10b981',padding:'10px' }}>
-                        <Plus size={14}/> Add Funds
-                      </button>
-                      <button onClick={()=>setTxModal('withdraw')} className="ac-btn" style={{ flex:1,justifyContent:'center',background:'rgba(239,68,68,.1)',border:'1px solid rgba(239,68,68,.2)',color:'#ef4444',padding:'10px' }}>
-                        <Minus size={14}/> Withdraw
-                      </button>
-                    </div>
-                  </div>
-                  <div style={{ display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:14 }}>
-                    {[
-                      { label:'Deposited', value:`+${fmt(txTotals.deposited)}`, color:'#10b981', bg:'rgba(16,185,129,.06)',  bd:'rgba(16,185,129,.15)' },
-                      { label:'Withdrawn', value:`−${fmt(txTotals.withdrawn)}`, color:'#ef4444', bg:'rgba(239,68,68,.06)',   bd:'rgba(239,68,68,.15)'  },
-                      { label:'Trade P&L', value:fmtSigned(txTotals.tradePnl), color:txTotals.tradePnl>=0?'#6366f1':'#ef4444', bg:'rgba(99,102,241,.06)', bd:'rgba(99,102,241,.15)' },
-                    ].map(({label,value,color,bg,bd})=>(
-                      <div key={label} style={{ background:bg,border:`1px solid ${bd}`,borderRadius:10,padding:'10px 12px',textAlign:'center' }}>
-                        <div style={{ fontFamily:'Manrope,sans-serif',fontSize:9,color:'#4b5263',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:4 }}>{label}</div>
-                        <div style={{ fontFamily:'DM Mono,monospace',fontSize:13,fontWeight:700,color }}>{value}</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:12 }}>
-                    <Input label="Starting Balance" value={draft.startingBalance} onChange={v=>set('startingBalance',parseFloat(v)||0)} type="number" prefix="$"/>
-                    <Select label="Currency" value={draft.currency||'USD'} onChange={v=>set('currency',v)} options={['USD','EUR','GBP','JPY','CAD','AUD','INR']}/>
-                  </div>
-                </Card>
-
-                <Card>
-                  <CardTitle icon={BarChart2} title="Broker & Trading Account" subtitle="Connected broker details"/>
-                  <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:12 }}>
-                    <Select label="Broker" value={draft.broker||'Other'} onChange={v=>set('broker',v)} options={BROKERS}/>
-                    <Input label="Account Type" value={draft.accountType||''} onChange={v=>set('accountType',v)} placeholder="Live / Prop / Paper"/>
-                  </div>
-                </Card>
-
-                <Card>
-                  <CardTitle icon={History} title="Transaction History" subtitle={`${(account.transactions||[]).length} transactions`}/>
-                  {!(account.transactions||[]).length ? (
-                    <div style={{ textAlign:'center',padding:'32px 0',color:'#4b5263' }}>
-                      <History size={24} style={{ margin:'0 auto 8px',opacity:.4 }}/>
-                      <p style={{ fontSize:12 }}>No transactions yet</p>
-                    </div>
-                  ) : (
-                    <div className="ac-scroll" style={{ maxHeight:320,overflowY:'auto' }}>
-                      {[...(account.transactions||[])].sort((a,b)=>new Date(b.date)-new Date(a.date)).map((tx,i)=>{
-                        const isPos = tx.amount >= 0;
-                        const icons = {
-                          deposit:   { icon:ArrowUpRight,   color:'#10b981', bg:'rgba(16,185,129,.1)'  },
-                          withdrawal:{ icon:ArrowDownRight, color:'#ef4444', bg:'rgba(239,68,68,.1)'   },
-                          trade_pnl: { icon:BarChart2,      color:'#6366f1', bg:'rgba(99,102,241,.1)'  },
-                        };
-                        const m    = icons[tx.type] || icons.trade_pnl;
-                        const Icon = m.icon;
-                        return (
-                          <div key={tx._id||i} className="ac-row" style={{ display:'flex',alignItems:'center',gap:12,padding:'10px 8px' }}>
-                            <div style={{ width:32,height:32,borderRadius:9,background:m.bg,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0 }}>
-                              <Icon size={13} color={m.color}/>
-                            </div>
-                            <div style={{ flex:1,minWidth:0 }}>
-                              <div style={{ fontFamily:'Manrope,sans-serif',fontSize:12,fontWeight:600,color:'#c8ccd8',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap' }}>{tx.description||tx.type}</div>
-                              <div style={{ fontFamily:'DM Mono,monospace',fontSize:10,color:'#4b5263',marginTop:2 }}>{new Date(tx.date).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</div>
-                            </div>
-                            <div style={{ fontFamily:'DM Mono,monospace',fontSize:12,fontWeight:700,color:isPos?'#10b981':'#ef4444',flexShrink:0 }}>
-                              {isPos?'+':'−'}${Math.abs(tx.amount).toLocaleString('en-US',{minimumFractionDigits:2})}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </Card>
-              </>
             )}
 
             {/* ══ GOALS ══ */}
@@ -951,9 +717,9 @@ export default function AccountCenter() {
                 </div>
                 <p style={{ fontFamily:'Manrope,sans-serif',fontSize:10,fontWeight:700,color:'#4b5263',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:12 }}>Risk at a Glance</p>
                 {[
-                  { label:'Risk Per Trade', pct:draft.riskPerTrade||0,  color:'#6366f1' },
-                  { label:'Max Daily Loss', pct:draft.maxDailyLoss||0,  color:'#ef4444' },
-                  { label:'Profit Target',  pct:draft.targetProfit||0,  color:'#10b981' },
+                  { label:'Risk Per Trade', pct:draft.riskPerTrade||0, color:'#6366f1' },
+                  { label:'Max Daily Loss', pct:draft.maxDailyLoss||0, color:'#ef4444' },
+                  { label:'Profit Target',  pct:draft.targetProfit||0, color:'#10b981' },
                 ].map(({label,pct,color}) => (
                   <div key={label} style={{ display:'flex',alignItems:'center',gap:12,marginBottom:10 }}>
                     <span style={{ fontFamily:'Manrope,sans-serif',fontSize:12,color:'#6b7280',width:130,flexShrink:0 }}>{label}</span>
@@ -966,36 +732,11 @@ export default function AccountCenter() {
               </Card>
             )}
 
-            {/* ══ NOTIFICATIONS ══ */}
-            {tab === 'notifications' && (
-              <Card>
-                <CardTitle icon={Bell} title="Notifications" subtitle="Control what updates you receive"/>
-                {[
-                  { key:'tradeAlerts',  label:'Trade Alerts',   desc:'Notify when a trade is added or updated'  },
-                  { key:'dailySummary', label:'Daily Summary',  desc:'End-of-day P&L and performance recap'      },
-                  { key:'weeklyReport', label:'Weekly Report',  desc:'Comprehensive weekly performance email'    },
-                  { key:'milestones',   label:'Milestones',     desc:'Celebrate win streaks and balance goals'   },
-                ].map(({ key, label, desc }, i, arr) => (
-                  <div key={key} style={{ display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 0',borderBottom:i<arr.length-1?'1px solid #1a1d24':'none' }}>
-                    <div>
-                      <div style={{ fontFamily:'Manrope,sans-serif',fontSize:13,fontWeight:600,color:'#c8ccd8' }}>{label}</div>
-                      <div style={{ fontFamily:'Manrope,sans-serif',fontSize:11,color:'#4b5263',marginTop:2 }}>{desc}</div>
-                    </div>
-                    <Toggle checked={account.notifications?.[key] ?? false} onChange={v => updateNotification(key, v)}/>
-                  </div>
-                ))}
-              </Card>
-            )}
-
-          </div>{/* end content */}
-        </div>{/* end flex row */}
-      </div>{/* end max-width wrapper */}
+          </div>
+        </div>
+      </div>
 
       {/* ── Modals ── */}
-      {txModal && (
-        <TxModal type={txModal} currentBalance={account.currentBalance} onClose={()=>setTxModal(null)}
-          onConfirm={txModal==='deposit' ? (a,d)=>deposit(a,d) : (a,d)=>withdraw(a,d)}/>
-      )}
       {aiModal     && <AICoachModal account={account} draft={draft} onClose={()=>setAiModal(false)}/>}
       {logoutModal && <LogoutModal  onConfirm={handleLogout} onCancel={()=>setLogoutModal(false)}/>}
     </div>

@@ -6,7 +6,7 @@ const AccountContext = createContext(null);
 const DEFAULT_ACCOUNT = {
   name: 'Trader', initials: 'T', email: '',
   accountType: 'Personal', broker: 'TD Ameritrade', currency: 'USD',
-  startingBalance: 32000, currentBalance: 32000,
+startingBalance: 0, currentBalance: 0,
   riskPerTrade: 1, maxDailyLoss: 3, targetProfit: 5,
   timezone: 'America/New_York',
   notifications: { tradeAlerts: true, dailySummary: true, weeklyReport: false, milestones: true },
@@ -40,14 +40,6 @@ export const AccountProvider = ({ children }) => {
     }
   };
 
-  const updateBalance = async (newBalance) => {
-    try {
-      const res = await accountService.updateBalance(newBalance);
-      setAccount(res.data);
-    } catch (err) {
-      console.error('updateBalance failed:', err);
-    }
-  };
 
   const updateNotification = async (key, value) => {
     try {
@@ -62,17 +54,7 @@ export const AccountProvider = ({ children }) => {
     }
   };
 
-  const deposit = async (amount, description) => {
-    const res = await accountService.deposit(amount, description);
-    setAccount(res.data);
-    return res.data;
-  };
 
-  const withdraw = async (amount, description) => {
-    const res = await accountService.withdraw(amount, description);
-    setAccount(res.data);
-    return res.data;
-  };
 
   const applyTradePnl = async (pnl, tradeId, symbol) => {
     try {
@@ -83,12 +65,21 @@ export const AccountProvider = ({ children }) => {
     }
   };
 
+const removeTradePnl = async (tradeId) => {
+  try {
+    const res = await accountService.removeTradePnl(tradeId);
+    setAccount(res.data);
+  } catch (err) {
+    console.error('removeTradePnl failed:', err);
+  }
+};
+
   return (
     <AccountContext.Provider value={{
-      account, accountLoading, fetchAccount,
-      updateAccount, updateBalance, updateNotification,
-      deposit, withdraw, applyTradePnl,
-    }}>
+  account, accountLoading, fetchAccount,
+  updateAccount, updateNotification,
+  applyTradePnl, removeTradePnl,
+}}>
       {children}
     </AccountContext.Provider>
   );
