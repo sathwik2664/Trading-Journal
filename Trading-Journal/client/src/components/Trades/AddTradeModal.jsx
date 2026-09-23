@@ -82,20 +82,22 @@ const TYPE_META = {
   commodities: { icon: '🥇', color: '#fbbf24' },
 };
 
+/* ── Trading sessions (hours shown in UTC, tooltip only) ── */
+const SESSIONS = [
+  { name: 'New York', icon: '🗽', color: '#4f8ef7', hours: '12:00 – 21:00 UTC' },
+  { name: 'London',   icon: '🎡', color: '#f5c842', hours: '07:00 – 16:00 UTC' },
+  { name: 'Tokyo',    icon: '🗼', color: '#b57bee', hours: '00:00 – 09:00 UTC' },
+  { name: 'Sydney',   icon: '🌉', color: '#00d4ff', hours: '21:00 – 06:00 UTC' },
+  { name: 'Indian',   icon: '🪔', color: '#ffa53d', hours: '03:45 – 10:00 UTC (NSE/BSE)' },
+];
+
+/* Built-in fallback strategies (constant, identical on every device).
+   Anything you add yourself lives in the Playbook (server) and syncs everywhere. */
 const DEFAULT_STRATEGIES = [
   'Breakout','Reversal','Trend Following','Scalp','Swing Trade',
   'News / FOMC','Supply & Demand','Order Block','VWAP Bounce',
   'Gap Fill','Liquidity Grab','ICT / SMC','Mean Reversion',
 ];
-
-const STRAT_KEY = 'tradebook_strategies_v1';
-const loadStrategies = () => {
-  try { const r = localStorage.getItem(STRAT_KEY); return r ? JSON.parse(r) : DEFAULT_STRATEGIES; }
-  catch { return DEFAULT_STRATEGIES; }
-};
-const saveStrategies = (arr) => {
-  try { localStorage.setItem(STRAT_KEY, JSON.stringify(arr)); } catch {}
-};
 
 const toBase64 = (file) => new Promise((res, rej) => {
   const r = new FileReader();
@@ -120,13 +122,58 @@ const calcRR = (entry, sl, tp, side) => {
 
 const TIMEFRAMES = ['1m','5m','15m','30m','1h','4h','1D','1W','1M'];
 
+const todayStr = () => new Date().toISOString().split('T')[0];
+
 const initialForm = {
   symbol:'', tradeType:'', side:'Long',
   tp:'', entryPrice:'', sl:'',
-  timeframe:'', strategy:'', outcome:'',
+  timeframe:'', session:'', strategy:'', outcome:'',
   riskAmount:'', manualPnl:'',
   tags:'', notes:'', screenshot:null,
-  date: new Date().toISOString().split('T')[0],
+  date: todayStr(),
+};
+const freshForm = () => ({ ...initialForm, date: todayStr() });
+
+/* ── Edit mode helpers ── */
+const numStr = (v) => (v === null || v === undefined || v === '' || isNaN(Number(v)) ? '' : String(v));
+
+// If the saved P&L is exactly what auto-calc would give, leave the manual field blank
+// so the P&L keeps following outcome / risk / SL / TP when the user edits them.
+const deriveManualPnl = (trade) => {
+  if (trade.pnl === null || trade.pnl === undefined || isNaN(Number(trade.pnl))) return '';
+  const pnl  = Number(trade.pnl);
+  const risk = parseFloat(trade.riskAmount);
+  const rrV  = parseFloat(calcRR(trade.entryPrice, trade.sl, trade.tp, trade.side));
+  let auto = null;
+  if (risk) {
+    if (trade.outcome === 'Win' && rrV > 0) auto = +(risk * rrV).toFixed(2);
+    else if (trade.outcome === 'Loss')      auto = -risk;
+    else if (trade.outcome === 'Breakeven') auto = 0;
+  }
+  if (auto !== null && Math.abs(auto - pnl) < 0.005) return '';
+  return String(trade.outcome === 'Win' || trade.outcome === 'Loss' ? Math.abs(pnl) : pnl);
+};
+
+const tradeToForm = (trade) => {
+  const d = trade.date ? new Date(trade.date) : null;
+  return {
+    symbol:     trade.symbol || '',
+    tradeType:  trade.tradeType || SYMBOL_DB.find(r => r.s === trade.symbol)?.type || '',
+    side:       trade.side || 'Long',
+    tp:         numStr(trade.tp),
+    entryPrice: numStr(trade.entryPrice),
+    sl:         numStr(trade.sl),
+    timeframe:  trade.timeframe || '',
+    session:    trade.session   || '',
+    strategy:   trade.strategy  || '',
+    outcome:    trade.outcome   || '',
+    riskAmount: numStr(trade.riskAmount),
+    manualPnl:  deriveManualPnl(trade),
+    tags:       Array.isArray(trade.tags) ? trade.tags.join(', ') : (trade.tags || ''),
+    notes:      trade.notes || '',
+    screenshot: trade.screenshot ? { existing: true, previewUrl: trade.screenshot } : null,
+    date:       d && !isNaN(d) ? d.toISOString().split('T')[0] : todayStr(),
+  };
 };
 
 const inputCls =
@@ -144,51 +191,6 @@ const Field = ({ label, children, className='' }) => (
     {children}
   </div>
 );
-
-const StrategyManager = ({ strategies, onUpdate, onClose }) => {
-  const [list, setList]       = useState([...strategies]);
-  const [newVal, setNewVal]   = useState('');
-  const [editIdx, setEditIdx] = useState(null);
-  const [editVal, setEditVal] = useState('');
-
-  const add      = () => { const v = newVal.trim(); if (!v || list.includes(v)) return; setList(l => [...l, v]); setNewVal(''); };
-  const remove   = (i) => setList(l => l.filter((_, idx) => idx !== i));
-  const startEdit = (i) => { setEditIdx(i); setEditVal(list[i]); };
-  const saveEdit  = () => { const v = editVal.trim(); if (!v) return; setList(l => l.map((x, i) => i === editIdx ? v : x)); setEditIdx(null); };
-
-  return (
-    <div className="bg-[#111114] border border-[#27272a] rounded-2xl p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-semibold text-white">Manage Strategies</span>
-        <button onClick={onClose} className="text-gray-500 hover:text-white w-6 h-6 flex items-center justify-center rounded-lg hover:bg-[#1e1e22] transition-colors text-lg">×</button>
-      </div>
-      <div className="flex gap-2">
-        <input value={newVal} onChange={e => setNewVal(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()} placeholder="Add strategy…" className={inputCls + ' flex-1'} />
-        <button onClick={add} className="px-3 py-2 bg-violet-600/25 hover:bg-violet-600/45 text-violet-300 rounded-xl text-sm border border-violet-500/30 transition-all">+ Add</button>
-      </div>
-      <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-        {list.map((s, i) => (
-          <div key={i} className="flex items-center gap-2 bg-[#18181b] rounded-xl px-3 py-2 group">
-            {editIdx === i ? (
-              <>
-                <input value={editVal} onChange={e => setEditVal(e.target.value)} onKeyDown={e => { if (e.key==='Enter') saveEdit(); if (e.key==='Escape') setEditIdx(null); }} autoFocus className="flex-1 bg-transparent text-white text-sm outline-none border-b border-violet-500/50" />
-                <button onClick={saveEdit} className="text-emerald-400 text-xs hover:text-emerald-300 font-medium">Save</button>
-                <button onClick={() => setEditIdx(null)} className="text-gray-500 text-xs hover:text-gray-300">Cancel</button>
-              </>
-            ) : (
-              <>
-                <span className="flex-1 text-sm text-gray-200">{s}</span>
-                <button onClick={() => startEdit(i)} className="text-gray-600 hover:text-violet-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity">Edit</button>
-                <button onClick={() => remove(i)}    className="text-gray-600 hover:text-red-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity ml-1">✕</button>
-              </>
-            )}
-          </div>
-        ))}
-      </div>
-      <button onClick={() => onUpdate(list)} className="w-full py-2 bg-violet-600/20 hover:bg-violet-600/40 text-violet-300 rounded-xl text-sm border border-violet-500/30 transition-all font-semibold">Save Strategies</button>
-    </div>
-  );
-};
 
 /* ── Price Ladder ── */
 const PriceLadder = ({ tp, entryPrice, sl, side, onChange }) => {
@@ -241,38 +243,64 @@ const PriceLadder = ({ tp, entryPrice, sl, side, onChange }) => {
   );
 };
 
-/* ── Main Component ── */
-const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
-  const [form,        setForm]        = useState(initialForm);
+/* ── Main Component ──
+   Props:
+   - onAdd(tradePayload)           → create mode
+   - editingTrade + onUpdate(id, tradePayload) → edit mode (pass the trade object to edit)
+*/
+const AddTradeModal = ({ isOpen, onClose, onAdd, onUpdate, editingTrade = null }) => {
+  const isEdit = !!editingTrade;
+
+  const [form,        setForm]        = useState(freshForm);
   const [loading,     setLoading]     = useState(false);
   const [imgDrag,     setImgDrag]     = useState(false);
   const [symQuery,    setSymQuery]    = useState('');
   const [symOpen,     setSymOpen]     = useState(false);
-  const [strategies,  setStrategies]  = useState(loadStrategies);
-  const [showStrat,   setShowStrat]   = useState(false);
   const [stratPicker, setStratPicker] = useState(false);
-  const symRef  = useRef(null);
-  const fileRef = useRef(null);
+  const symRef      = useRef(null);
+  const fileRef     = useRef(null);
+  const wasEditing  = useRef(false);
 
-  // ── Pull Playbook setups (your existing hook, unchanged) ──────────────────
-  const { groupedSetups } = useSetups();
+  // ── Playbook setups: shared, server-backed store (same data as the Playbook page) ──
+  const { groupedSetups, setups, loading: setupsLoading, error: setupsError, refresh } = useSetups();
 
-  // Names that exist in Playbook → used to deduplicate local strategies list
-  const playbookNameSet = useMemo(() => {
-    const allSetups = Object.values(groupedSetups).flat();
-    return new Set(allSetups.map(s => s.name.toLowerCase()));
-  }, [groupedSetups]);
+  // Pull the latest setups from the server every time the modal opens
+  useEffect(() => {
+    if (isOpen) refresh();
+  }, [isOpen, refresh]);
 
-  // Local strategies that are NOT already covered by a Playbook setup
-  const localOnly = useMemo(
-    () => strategies.filter(s => !playbookNameSet.has(s.toLowerCase())),
-    [strategies, playbookNameSet]
+  // Names that exist in Playbook → used to deduplicate the built-in list
+  const playbookNameSet = useMemo(
+    () => new Set(setups.map(s => (s.name || '').toLowerCase())),
+    [setups]
   );
 
-  const hasPlaybookSetups = Object.keys(groupedSetups).length > 0;
+  // Built-in strategies that are NOT already covered by a Playbook setup
+  const localOnly = useMemo(
+    () => DEFAULT_STRATEGIES.filter(s => !playbookNameSet.has(s.toLowerCase())),
+    [playbookNameSet]
+  );
+
+  const hasPlaybookSetups = setups.length > 0;
   const hasLocalOnly      = localOnly.length > 0;
 
   const set = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
+
+  // ── Load the trade into the form when opened in edit mode; reset when going back to add mode ──
+  useEffect(() => {
+    if (!isOpen) return;
+    if (editingTrade) {
+      setForm(tradeToForm(editingTrade));
+      setSymQuery(editingTrade.symbol || '');
+      setSymOpen(false);
+      setStratPicker(false);
+      wasEditing.current = true;
+    } else if (wasEditing.current) {
+      setForm(freshForm());
+      setSymQuery('');
+      wasEditing.current = false;
+    }
+  }, [isOpen, editingTrade]);
 
   const rr    = useMemo(() => calcRR(form.entryPrice, form.sl, form.tp, form.side), [form.entryPrice, form.sl, form.tp, form.side]);
   const rrNum = rr !== null ? parseFloat(rr) : null;
@@ -316,8 +344,6 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
     if (item) handleScreenshot(item.getAsFile());
   }, [handleScreenshot]);
 
-  const handleStrategyUpdate = (newList) => { setStrategies(newList); saveStrategies(newList); setShowStrat(false); };
-
   /* ── PnL calculation ── */
   const calcPnl = () => {
     if (form.manualPnl !== '') {
@@ -352,45 +378,60 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
   }, [form.outcome, form.riskAmount, rrNum]);
 
   const handleSubmit = async () => {
-    if (!form.symbol || !form.tradeType || !form.entryPrice) {
-      alert('Please fill: Symbol, Trade Type, and Entry Price.');
+    // Edit mode only needs a symbol (older / imported trades may not have entry price or type)
+    if (!form.symbol || (!isEdit && (!form.tradeType || !form.entryPrice))) {
+      alert(isEdit ? 'Symbol is required.' : 'Please fill: Symbol, Trade Type, and Entry Price.');
       return;
     }
     setLoading(true);
     try {
       const now = form.date ? new Date(form.date).toISOString() : new Date().toISOString();
       const pnl = calcPnl();
-      await onAdd({
+      const payload = {
         symbol:     form.symbol,
-        tradeType:  form.tradeType,
+        tradeType:  form.tradeType || undefined,
         side:       form.side,
         entryPrice: parseFloat(form.entryPrice) || null,
         sl:         parseFloat(form.sl)         || null,
         tp:         parseFloat(form.tp)         || null,
         rr:         rrNum,
         timeframe:  form.timeframe  || null,
+        session:    form.session    || null,
         strategy:   form.strategy   || null,
         outcome:    form.outcome    || null,
         riskAmount: parseFloat(form.riskAmount) || null,
         pnl,
         tags:       form.tags ? form.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
         notes:      form.notes || null,
-        screenshot: form.screenshot?.base64 || null,
         date:       now,
-      });
-      setForm(initialForm);
-      setSymQuery('');
+      };
+
+      if (isEdit) {
+        // new image → send it · removed image → send null · untouched → don't send the field
+        if (form.screenshot?.base64)                     payload.screenshot = form.screenshot.base64;
+        else if (!form.screenshot && editingTrade.screenshot) payload.screenshot = null;
+        await onUpdate(editingTrade._id ?? editingTrade.id, payload);
+      } else {
+        await onAdd({ ...payload, screenshot: form.screenshot?.base64 || null });
+        setForm(freshForm());
+        setSymQuery('');
+      }
       onClose();
     } finally {
       setLoading(false);
     }
   };
 
+  const handleCancel = () => {
+    if (!isEdit) { setForm(freshForm()); setSymQuery(''); }
+    onClose();
+  };
+
   const typeMeta = form.tradeType ? TYPE_META[form.tradeType] : null;
   const rrColor  = rrNum === null ? '#6b7280' : rrNum <= 0 ? '#f87171' : rrNum < 1 ? '#fb923c' : rrNum < 2 ? '#fbbf24' : '#34d399';
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="New Trade">
+    <Modal isOpen={isOpen} onClose={onClose} title={isEdit ? 'Edit Trade' : 'New Trade'}>
       <div className="space-y-4 max-h-[82vh] overflow-y-auto pr-0.5 custom-scroll" onPaste={pasteHandler}>
 
         {/* Date */}
@@ -502,6 +543,35 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
           </div>
         </Field>
 
+        {/* Session */}
+        <Field label="Session">
+          <div className="flex flex-wrap gap-1.5">
+            {SESSIONS.map(s => {
+              const active = form.session === s.name;
+              return (
+                <button key={s.name} type="button"
+                  title={s.hours}
+                  onClick={() => set('session', active ? '' : s.name)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all flex items-center gap-1.5
+                    ${active ? '' : 'bg-transparent text-gray-500 border-[#27272a] hover:border-gray-500 hover:text-gray-200'}`}
+                  style={active ? {
+                    color: s.color,
+                    background: s.color + '22',
+                    borderColor: s.color + '80',
+                    boxShadow: `0 0 14px ${s.color}22`,
+                  } : undefined}>
+                  <span>{s.icon}</span>{s.name}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-gray-600 text-[10px] mt-1.5">
+            {form.session
+              ? `${form.session} session · ${SESSIONS.find(s => s.name === form.session)?.hours}`
+              : 'Which market session did you take this trade in? (optional)'}
+          </p>
+        </Field>
+
         {/* Outcome */}
         <Field label="Outcome">
           <div className="flex gap-2">
@@ -525,23 +595,42 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
           <div className="space-y-2">
             <div className="flex gap-2">
               <button type="button"
-                onClick={() => { setStratPicker(p => !p); setShowStrat(false); }}
+                onClick={() => setStratPicker(p => !p)}
                 className={`flex-1 ${inputCls} text-left flex items-center justify-between`}>
                 <span className={form.strategy ? 'text-white' : 'text-gray-600'}>
                   {form.strategy || 'Select strategy…'}
                 </span>
                 <span className="text-gray-500 text-xs ml-2">{stratPicker ? '▲' : '▼'}</span>
               </button>
+              {form.strategy && (
+                <button type="button"
+                  onClick={() => set('strategy', '')}
+                  title="Clear strategy"
+                  className="px-3 py-2 bg-[#0b0b0d] border border-[#27272a] rounded-xl text-gray-500 hover:text-red-400 hover:border-red-500/40 text-sm transition-all">
+                  ✕
+                </button>
+              )}
               <button type="button"
-                onClick={() => { setShowStrat(p => !p); setStratPicker(false); }}
-                title="Manage local strategies"
+                onClick={() => refresh()}
+                title="Sync setups from Playbook"
                 className="px-3 py-2 bg-[#0b0b0d] border border-[#27272a] rounded-xl text-gray-500 hover:text-violet-400 hover:border-violet-500/40 text-sm transition-all">
-                ✎
+                ⟳
               </button>
             </div>
 
             {stratPicker && (
               <div className="bg-[#111114] border border-[#27272a] rounded-2xl p-3 space-y-3">
+
+                {/* ── Sync status / error ── */}
+                {setupsError && (
+                  <div className="flex items-start gap-2 bg-red-500/8 border border-red-500/20 rounded-xl px-3 py-2">
+                    <span className="text-red-400 text-[11px] flex-1 leading-snug">Couldn't sync Playbook: {setupsError}</span>
+                    <button type="button" onClick={() => refresh()} className="text-[10px] text-red-300 hover:text-white font-semibold">Retry</button>
+                  </div>
+                )}
+                {setupsLoading && (
+                  <p className="text-gray-500 text-[11px] px-1">Loading Playbook setups…</p>
+                )}
 
                 {/* ── Playbook setups grouped by category ── */}
                 {hasPlaybookSetups && (
@@ -574,7 +663,7 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
                   </>
                 )}
 
-                {/* ── Local-only strategies not in Playbook ── */}
+                {/* ── Built-in strategies not in Playbook ── */}
                 {hasLocalOnly && (
                   <div>
                     {hasPlaybookSetups && (
@@ -599,7 +688,7 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
                 )}
 
                 {/* ── Empty state ── */}
-                {!hasPlaybookSetups && !hasLocalOnly && (
+                {!setupsLoading && !hasPlaybookSetups && !hasLocalOnly && (
                   <div className="text-center py-4 space-y-1">
                     <p className="text-gray-500 text-xs">No strategies yet.</p>
                     <p className="text-gray-600 text-[10px]">
@@ -608,10 +697,6 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
                   </div>
                 )}
               </div>
-            )}
-
-            {showStrat && (
-              <StrategyManager strategies={strategies} onUpdate={handleStrategyUpdate} onClose={() => setShowStrat(false)} />
             )}
           </div>
         </Field>
@@ -698,7 +783,7 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
                 <button type="button" onClick={() => set('screenshot', null)} className="text-xs bg-red-500/20 hover:bg-red-500/40 text-red-400 px-3 py-1.5 rounded-lg backdrop-blur-sm">Remove</button>
               </div>
               <div className="absolute bottom-2 right-2 bg-black/60 text-gray-300 text-[10px] px-2 py-1 rounded-md backdrop-blur-sm">
-                {(form.screenshot.file.size / 1024).toFixed(0)} KB
+                {form.screenshot.file ? `${(form.screenshot.file.size / 1024).toFixed(0)} KB` : 'Saved'}
               </div>
             </div>
           ) : (
@@ -730,7 +815,7 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
 
         {/* Actions */}
         <div className="flex gap-3 pt-1 pb-1">
-          <Button variant="secondary" className="flex-1" onClick={() => { setForm(initialForm); setSymQuery(''); onClose(); }}>
+          <Button variant="secondary" className="flex-1" onClick={handleCancel}>
             Cancel
           </Button>
           <Button className="flex-1" onClick={handleSubmit} disabled={loading}>
@@ -739,7 +824,7 @@ const AddTradeModal = ({ isOpen, onClose, onAdd }) => {
                   <span className="w-3.5 h-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
                   Saving…
                 </span>
-              : 'Save Trade'
+              : isEdit ? 'Update Trade' : 'Save Trade'
             }
           </Button>
         </div>

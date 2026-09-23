@@ -1,6 +1,8 @@
 /**
  * Trades.jsx — Ultra-Premium Trading Journal with Recycle Bin
  * Features: Delete → Recycle Bin → 30-day expiry → Restore
+ *           Edit trades · Strategy column + search · Accurate Avg RR
+ *           Trading session (New York / London / Tokyo / Sydney / Indian) column + filter
  */
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useTrades } from '../hooks/useTrades';
@@ -13,7 +15,7 @@ import {
   Download, Upload, Tag, SlidersHorizontal,
   X, ChevronRight, BarChart2, FileText,
   Zap, Activity, Target, Calendar, Image, ZoomIn, Trash2,
-  RotateCcw, Clock, AlertTriangle, Eraser
+  RotateCcw, Clock, AlertTriangle, Eraser, Pencil, Globe
 } from 'lucide-react';
 import dayjs from 'dayjs';
 
@@ -50,6 +52,24 @@ const T = {
 };
 
 const BIN_EXPIRY_DAYS = 30;
+
+/* ═════════════════════════ TRADING SESSIONS ═════════════════════════ */
+const SESSIONS = [
+  { name: 'New York', icon: '🗽', color: T.accent,  hours: '12:00 – 21:00 UTC' },
+  { name: 'London',   icon: '🎡', color: T.gold,    hours: '07:00 – 16:00 UTC' },
+  { name: 'Tokyo',    icon: '🗼', color: T.purple,  hours: '00:00 – 09:00 UTC' },
+  { name: 'Sydney',   icon: '🌉', color: T.cyan,    hours: '21:00 – 06:00 UTC' },
+  { name: 'Indian',   icon: '🪔', color: T.yellow,  hours: '03:45 – 10:00 UTC (NSE/BSE)' },
+];
+const SESSION_MAP = Object.fromEntries(SESSIONS.map(s => [s.name, s]));
+
+// Match free text (e.g. from a CSV) to a known session name, case-insensitively
+const normalizeSession = (v) => {
+  const q = String(v || '').trim().toLowerCase();
+  if (!q) return null;
+  const hit = SESSIONS.find(s => s.name.toLowerCase() === q || (q === 'ny' && s.name === 'New York') || (q === 'india' && s.name === 'Indian'));
+  return hit ? hit.name : null;
+};
 
 /* ═════════════════════════ INJECT FONTS + KEYFRAMES ═════════════════════════ */
 if (typeof document !== 'undefined') {
@@ -93,7 +113,7 @@ if (typeof document !== 'undefined') {
       .tj-row.expanded td { background: rgba(79,142,247,.06) !important; }
       .tj-row.deleting td { animation: tj-deleteRow .35s cubic-bezier(.4,0,.2,1) both; overflow: hidden; }
 
-      /* Delete button in row — hidden by default, shown on hover */
+      /* Edit / Delete buttons in row — hidden by default, shown on hover */
       .tj-row .tj-delete-btn { opacity: 0; transition: opacity .15s; }
       .tj-row:hover .tj-delete-btn { opacity: 1; }
 
@@ -320,6 +340,23 @@ const fix2  = n => +n.toFixed(2);
 const pct   = (a, b) => b ? +((a / b) * 100).toFixed(1) : 0;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
+/* ══ Planned Risk:Reward of a single trade (reward ÷ risk from Entry / SL / TP) ══
+   Uses the saved `rr` when valid, otherwise recomputes from entryPrice / sl / tp / side.
+   Returns null when the trade has no valid planned RR (so it's excluded from the average). */
+const plannedRR = (t) => {
+  let v = parseFloat(t.rr);
+  if (!(v > 0)) {
+    const e = parseFloat(t.entryPrice), s = parseFloat(t.sl), tp = parseFloat(t.tp);
+    if (e && s && tp) {
+      const isLong = (t.side || '').toLowerCase() !== 'short';
+      const risk   = isLong ? e - s : s - e;
+      const reward = isLong ? tp - e : e - tp;
+      v = risk > 0 ? reward / risk : NaN;
+    }
+  }
+  return v > 0 ? v : null;
+};
+
 const OUTCOME_TAGS = ['A+ Setup','FOMO','Revenge','Planned','Overtraded','News Play','Breakout','Reversal','Scalp','Swing'];
 const TAG_COLORS = {
   'A+ Setup':   [T.green,  T.greenL],
@@ -439,6 +476,22 @@ const TagPill = ({ tag, onRemove }) => {
   );
 };
 
+/* ══ Session pill (table cell) ══ */
+const SessionPill = ({ session, children }) => {
+  const meta = SESSION_MAP[session];
+  if (!meta) return <span style={{ color: T.muted, fontFamily: T.mono, fontSize: 10 }}>—</span>;
+  return (
+    <span title={meta.hours} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 5,
+      fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+      padding: '3px 10px', borderRadius: 6, whiteSpace: 'nowrap',
+      background: `${meta.color}1a`, color: meta.color, border: `1px solid ${meta.color}35`,
+    }}>
+      <span style={{ fontSize: 11 }}>{meta.icon}</span>{children ?? session}
+    </span>
+  );
+};
+
 /* ══ Streak badge ══ */
 const StreakBadge = ({ streak, type }) => {
   if (!streak || streak < 2) return null;
@@ -471,11 +524,12 @@ function parseCSV(text) {
     const obj = {};
     headers.forEach((h, i) => obj[h] = vals[i] || '');
     return {
-      date:   obj.date   || dayjs().format('YYYY-MM-DD'),
-      symbol: (obj.symbol || 'UNKNOWN').toUpperCase(),
-      side:   obj.side   || obj.type || 'Long',
-      pnl:    parseFloat(obj.pnl || obj['p&l'] || obj.profit || '0') || 0,
-      notes:  obj.notes  || '',
+      date:    obj.date   || dayjs().format('YYYY-MM-DD'),
+      symbol:  (obj.symbol || 'UNKNOWN').toUpperCase(),
+      side:    obj.side   || obj.type || 'Long',
+      pnl:     parseFloat(obj.pnl || obj['p&l'] || obj.profit || '0') || 0,
+      session: normalizeSession(obj.session),
+      notes:   obj.notes  || '',
     };
   }).filter(t => t.symbol && !isNaN(t.pnl));
 }
@@ -808,7 +862,9 @@ const Trades = () => {
 const { trades, loading, addTrade, editTrade, removeTrade: deleteTrade, fetchTradeImages } = useTrades();
 const { applyTradePnl, removeTradePnl } = useAccount();
   const [modalOpen,    setModalOpen]    = useState(false);
+  const [editingTrade, setEditingTrade] = useState(null);
   const [filter,       setFilter]       = useState('All');
+  const [sessionFilter, setSessionFilter] = useState('All');
   const [search,       setSearch]       = useState('');
   const [dateFrom,     setDateFrom]     = useState('');
   const [dateTo,       setDateTo]       = useState('');
@@ -840,7 +896,7 @@ const { applyTradePnl, removeTradePnl } = useAccount();
   const [showBin,      setShowBin]      = useState(false);
 
   const [cols, setCols] = useState({
-    date: true, symbol: true, side: true, pnl: true,
+    date: true, symbol: true, side: true, session: true, strategy: true, pnl: true,
     rMultiple: true, tags: true, notes: false,
   });
 
@@ -869,9 +925,9 @@ const { applyTradePnl, removeTradePnl } = useAccount();
   useEffect(() => {
     const fn = e => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      if (e.key === 'n' || e.key === 'N') setModalOpen(true);
+      if (e.key === 'n' || e.key === 'N') { setEditingTrade(null); setModalOpen(true); }
       if (e.key === '/') { e.preventDefault(); searchRef.current?.focus(); }
-      if (e.key === 'Escape') { setModalOpen(false); setExpanded(null); setShowBin(false); }
+      if (e.key === 'Escape') { setModalOpen(false); setEditingTrade(null); setExpanded(null); setShowBin(false); }
     };
     window.addEventListener('keydown', fn);
     return () => window.removeEventListener('keydown', fn);
@@ -890,6 +946,16 @@ useEffect(() => {
     return next;
   });
 }, [trades]);
+
+  /* ── Modal open / close (new + edit share the same modal) ── */
+  const openNew = useCallback(() => { setEditingTrade(null); setModalOpen(true); }, []);
+  const openEdit = useCallback((e, trade) => {
+    e?.stopPropagation();
+    setEditingTrade(trade);
+    setModalOpen(true);
+  }, []);
+  const closeModal = useCallback(() => { setModalOpen(false); setEditingTrade(null); }, []);
+
   /* ── Delete trade → Recycle Bin ── */
   const handleDelete = useCallback((e, trade, idx) => {
     e.stopPropagation();
@@ -918,7 +984,6 @@ const tid = trade._id ?? trade.id ?? `${trade.symbol}_${trade.date}_${trade.pnl}
         deleteTrade(trade._id || trade.id);
       }
       if (trade._id || trade.id) removeTradePnl(trade._id || trade.id); // ← ADD THIS LINE
-      // Collapse if expanded
       // Collapse if expanded
       setExpanded(cur => cur === tid ? null : cur);
     }, 320);
@@ -951,18 +1016,35 @@ const tid = trade._id ?? trade.id ?? `${trade.symbol}_${trade.date}_${trade.pnl}
     setShowBin(false);
   }, []);
 
-  
+  /* ── R-Multiple (accurate) ──
+     R = P&L ÷ the risk you actually put on that trade (riskAmount).
+     Falls back to your average loss only for trades that have no risk amount saved (e.g. CSV imports). */
+  const avgLossAbs = useMemo(() => {
+    const l = trades.filter(t => t.pnl < 0);
+    return l.length ? Math.abs(l.reduce((s, t) => s + t.pnl, 0) / l.length) : 1;
+  }, [trades]);
+
+  const rOf = useCallback((t) => {
+    const risk = parseFloat(t.riskAmount);
+    const base = risk > 0 ? risk : avgLossAbs;
+    return base ? fix2(t.pnl / base) : 0;
+  }, [avgLossAbs]);
+
   /* ── Filtered + sorted trades ── */
   const filteredTrades = useMemo(() => {
     // Exclude trades that are in the recycle bin
     const binIds = new Set(deletedTrades.map(t => t.tid));
+    const q = search.trim().toLowerCase();
     return trades
       .filter(t => {
         const tid = t.id ?? t._id ?? `${t.symbol}_${t.date}_${t.pnl}`;
         if (binIds.has(tid)) return false;
         const outcome = t.pnl > 0 ? 'Winners' : t.pnl < 0 ? 'Losers' : 'Breakeven';
         if (filter !== 'All' && filter !== outcome && t.side !== filter) return false;
-        if (search && !t.symbol.toLowerCase().includes(search.toLowerCase())) return false;
+        // Session filter
+        if (sessionFilter !== 'All' && t.session !== sessionFilter) return false;
+        // Search matches symbol OR strategy name
+        if (q && !(t.symbol || '').toLowerCase().includes(q) && !(t.strategy || '').toLowerCase().includes(q)) return false;
         if (dateFrom && dayjs(t.date).isBefore(dayjs(dateFrom))) return false;
         if (dateTo   && dayjs(t.date).isAfter(dayjs(dateTo).endOf('day'))) return false;
         const stableId = t.id ?? t._id ?? `${t.symbol}_${t.date}_${t.pnl}`;
@@ -973,16 +1055,26 @@ const tid = trade._id ?? trade.id ?? `${trade.symbol}_${trade.date}_${trade.pnl}
       .sort((a, b) => {
         let va = a[sort.key], vb = b[sort.key];
         if (sort.key === 'date') { va = new Date(va); vb = new Date(vb); }
-        if (sort.key === 'rMultiple') {
-          const avgL = trades.filter(t => t.pnl < 0).reduce((s, t) => s + t.pnl, 0) /
-            Math.max(trades.filter(t => t.pnl < 0).length, 1);
-          va = avgL ? a.pnl / Math.abs(avgL) : 0;
-          vb = avgL ? b.pnl / Math.abs(avgL) : 0;
-        }
+        if (sort.key === 'strategy') { va = (a.strategy || '').toLowerCase(); vb = (b.strategy || '').toLowerCase(); }
+        if (sort.key === 'session') { va = (a.session || '').toLowerCase(); vb = (b.session || '').toLowerCase(); }
+        if (sort.key === 'rMultiple') { va = rOf(a); vb = rOf(b); }
         return sort.dir * (va > vb ? 1 : va < vb ? -1 : 0);
       });
-  }, [trades, filter, search, dateFrom, dateTo, tagFilter, tradeTags, sort, deletedTrades]);
+  }, [trades, filter, sessionFilter, search, dateFrom, dateTo, tagFilter, tradeTags, sort, deletedTrades, rOf]);
 
+  /* ── Trade count per session (for the filter chips; excludes trades in the bin) ── */
+  const sessionCounts = useMemo(() => {
+    const binIds = new Set(deletedTrades.map(t => t.tid));
+    const counts = { All: 0 };
+    SESSIONS.forEach(s => { counts[s.name] = 0; });
+    trades.forEach(t => {
+      const tid = t.id ?? t._id ?? `${t.symbol}_${t.date}_${t.pnl}`;
+      if (binIds.has(tid)) return;
+      counts.All += 1;
+      if (t.session && counts[t.session] !== undefined) counts[t.session] += 1;
+    });
+    return counts;
+  }, [trades, deletedTrades]);
 
 
 /* ── Bulk delete selected ── */
@@ -1015,6 +1107,14 @@ const handleBulkDelete = useCallback(() => {
     const pf    = avgL && losrs.length ? fix2(avgW * wnrs.length / (avgL * losrs.length)) : 0;
     const avgPnl = filteredTrades.length ? fix2(net / filteredTrades.length) : 0;
 
+    // ── Avg RR ──
+    // Planned: mean of each trade's Entry/SL/TP reward÷risk (only trades that have valid levels)
+    // Realized: avg win ÷ avg loss actually achieved
+    const plannedList = filteredTrades.map(plannedRR).filter(v => v !== null);
+    const rrCount     = plannedList.length;
+    const avgRR       = rrCount ? fix2(plannedList.reduce((s, v) => s + v, 0) / rrCount) : 0;
+    const realizedRR  = avgL ? fix2(avgW / avgL) : 0;
+
     const equity = [];
     let running = 0;
     [...filteredTrades].reverse().forEach(t => { running += t.pnl; equity.push(running); });
@@ -1027,27 +1127,23 @@ const handleBulkDelete = useCallback(() => {
     });
 
     const maxAbsPnl = Math.max(...filteredTrades.map(t => Math.abs(t.pnl)), 1);
-    return { net, wr, avgW, avgL, pf, avgPnl, streak: Math.abs(cur), streakType, wnrs, losrs, maxAbsPnl, equity };
+    return { net, wr, avgW, avgL, pf, avgPnl, avgRR, rrCount, realizedRR, streak: Math.abs(cur), streakType, wnrs, losrs, maxAbsPnl, equity };
   }, [filteredTrades, trades]);
 
-  /* ── R-Multiple ── */
-  const avgLossAbs = useMemo(() => {
-    const l = trades.filter(t => t.pnl < 0);
-    return l.length ? Math.abs(l.reduce((s, t) => s + t.pnl, 0) / l.length) : 1;
-  }, [trades]);
-  const rMultiple = pnl => fix2(pnl / avgLossAbs);
-
-  const highlightSym = useCallback((symbol) => {
-    if (!search) return symbol;
-    const idx = symbol.toLowerCase().indexOf(search.toLowerCase());
-    if (idx === -1) return symbol;
+  const highlight = useCallback((text) => {
+    if (!text || !search) return text;
+    const str = String(text);
+    const q   = search.trim();
+    if (!q) return str;
+    const idx = str.toLowerCase().indexOf(q.toLowerCase());
+    if (idx === -1) return str;
     return (
       <>
-        {symbol.slice(0, idx)}
+        {str.slice(0, idx)}
         <span style={{ color: T.accent, background: T.accentL, borderRadius: 3, padding: '0 2px' }}>
-          {symbol.slice(idx, idx + search.length)}
+          {str.slice(idx, idx + q.length)}
         </span>
-        {symbol.slice(idx + search.length)}
+        {str.slice(idx + q.length)}
       </>
     );
   }, [search]);
@@ -1118,9 +1214,9 @@ const handleBulkDelete = useCallback(() => {
   /* ── Export ── */
   const exportCSV = (subset = null) => {
     const rows = (subset || filteredTrades).map(t =>
-      `${t.date},${t.symbol},${t.side || ''},${t.pnl},${rMultiple(t.pnl)},"${(tradeNotes[t.id] || '').replace(/"/g, "'")}","${(tradeTags[t.id] || []).join(';')}"`
+      `${t.date},${t.symbol},${t.side || ''},"${t.session || ''}","${(t.strategy || '').replace(/"/g, "'")}",${t.pnl},${rOf(t)},"${(tradeNotes[t.id] || '').replace(/"/g, "'")}","${(tradeTags[t.id] || []).join(';')}"`
     );
-    const blob = new Blob([['Date,Symbol,Side,PnL,R-Multiple,Notes,Tags', ...rows].join('\n')], { type: 'text/csv' });
+    const blob = new Blob([['Date,Symbol,Side,Session,Strategy,PnL,R-Multiple,Notes,Tags', ...rows].join('\n')], { type: 'text/csv' });
     const a = Object.assign(document.createElement('a'), {
       href: URL.createObjectURL(blob),
       download: `trades_${dayjs().format('YYYY-MM-DD')}.csv`,
@@ -1161,6 +1257,33 @@ const handleAdd = useCallback(async (trade) => {
     }));
   }
 }, [addTrade, applyTradePnl]);
+
+  /* ── Update (edit) trade ── */
+const handleUpdate = useCallback(async (id, payload) => {
+  const old = trades.find(t => (t._id ?? t.id) === id);
+  await editTrade(id, payload);
+
+  // Keep the account balance in sync if P&L or symbol changed
+  const pnlChanged    = (Number(old?.pnl) || 0) !== (Number(payload.pnl) || 0);
+  const symbolChanged = !!old && old.symbol !== payload.symbol;
+  if (pnlChanged || symbolChanged) {
+    await removeTradePnl(id);
+    if (payload.pnl !== null && payload.pnl !== undefined) {
+      await applyTradePnl(payload.pnl, id, payload.symbol);
+    }
+  }
+
+  // New screenshot picked in the edit form → replace the main image shown in the row
+  if (typeof payload.screenshot === 'string') {
+    const image = {
+      id: `img_${id}`,
+      src: payload.screenshot,
+      name: `${payload.symbol}_chart.png`,
+      addedAt: new Date().toISOString(),
+    };
+    setTradeImages(prev => ({ ...prev, [id]: [image, ...(prev[id] || []).slice(1)] }));
+  }
+}, [trades, editTrade, applyTradePnl, removeTradePnl]);
 
   if (loading) return <Loader />;
 
@@ -1268,7 +1391,7 @@ const handleAdd = useCallback(async (trade) => {
               style={{ background: showCols ? T.accentL : T.card, border: `1px solid ${showCols ? T.accent : T.border}`, color: showCols ? T.accent : T.sub }}>
               <SlidersHorizontal size={13} />
             </button>
-            <button className="tj-btn tj-pop" onClick={() => setModalOpen(true)}
+            <button className="tj-btn tj-pop" onClick={openNew}
               style={{ background: `linear-gradient(135deg,${T.accent},${T.cyan})`, color: '#fff', boxShadow: `0 4px 20px rgba(79,142,247,.4)`, padding: '9px 20px' }}>
               <Plus size={14} /> New Trade
             </button>
@@ -1316,7 +1439,7 @@ const handleAdd = useCallback(async (trade) => {
         )}
 
         {/* ══ STATS GRID ══ */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
           {/* Net P&L */}
           <div className="tj-stat-card tj-fade" style={{
             background: stats.net >= 0
@@ -1352,11 +1475,15 @@ const handleAdd = useCallback(async (trade) => {
             value={stats.pf}       animVal={stats.pf}
             sub="Gross W ÷ Gross L" />
 
-          <StatCard delay={120} label="Avg Win"        icon={TrendingUp}  color={T.green}
+          <StatCard delay={120} label="Avg RR"         icon={Activity}    color={T.cyan}
+            value={stats.rrCount ? `1 : ${stats.avgRR}` : '—'}
+            sub={`Realized 1 : ${stats.realizedRR} · ${stats.rrCount}/${filteredTrades.length} planned`} />
+
+          <StatCard delay={160} label="Avg Win"        icon={TrendingUp}  color={T.green}
             value={formatCurrency(stats.avgW)}
             sub={`vs ${formatCurrency(stats.avgL)} avg loss`} />
 
-          <StatCard delay={160} label="Avg P&L/Trade"  icon={Zap}         color={stats.avgPnl >= 0 ? T.green : T.red}
+          <StatCard delay={200} label="Avg P&L/Trade"  icon={Zap}         color={stats.avgPnl >= 0 ? T.green : T.red}
             value={formatCurrency(stats.avgPnl)}
             sub={`${filteredTrades.length} trades in view`} />
         </div>
@@ -1378,7 +1505,7 @@ const handleAdd = useCallback(async (trade) => {
               style={{ border: `2px dashed ${dragOver ? T.accent : T.borderHi}`, borderRadius: 12, padding: '40px 24px', textAlign: 'center', cursor: 'pointer', background: dragOver ? T.accentG : 'transparent', transition: 'all .2s' }}>
               <Upload size={30} style={{ color: dragOver ? T.accent : T.sub, marginBottom: 12 }} />
               <p style={{ fontFamily: T.sans, color: T.textSoft, fontSize: 13, marginBottom: 6 }}>Drag & drop a CSV, or click to browse</p>
-              <p style={{ fontFamily: T.mono, color: T.muted, fontSize: 10 }}>Columns: Date, Symbol, Side, PnL — Notes & Tags optional</p>
+              <p style={{ fontFamily: T.mono, color: T.muted, fontSize: 10 }}>Columns: Date, Symbol, Side, PnL — Session, Notes & Tags optional</p>
             </div>
             <input ref={fileRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={e => handleImport(e.target.files[0])} />
             {importErr && <p style={{ color: T.red, fontFamily: T.mono, fontSize: 11, marginTop: 12 }}>⚠ {importErr}</p>}
@@ -1402,7 +1529,7 @@ const handleAdd = useCallback(async (trade) => {
         )}
 
         {/* ══ FILTER BAR ══ */}
-        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: '12px 16px', marginBottom: 14, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: '12px 16px', marginBottom: 10, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           <div style={{ display: 'flex', gap: 2, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 3 }}>
             {['All','Long','Short','Winners','Losers'].map(f => (
               <button key={f} onClick={() => setFilter(f)} style={{ padding: '5px 14px', fontSize: 10, fontFamily: T.mono, fontWeight: 700, border: 'none', cursor: 'pointer', borderRadius: 8, letterSpacing: '.04em', background: filter === f ? T.accent : 'transparent', color: filter === f ? '#fff' : T.sub, transition: 'all .15s', boxShadow: filter === f ? `0 2px 12px rgba(79,142,247,.35)` : 'none' }}>{f}</button>
@@ -1413,7 +1540,7 @@ const handleAdd = useCallback(async (trade) => {
 
           <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
             <Search size={12} style={{ position: 'absolute', left: 10, color: T.sub, pointerEvents: 'none' }} />
-            <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)} placeholder="Symbol  (/)" className="tj-input" style={{ paddingLeft: 30, width: 150, height: 34 }} />
+            <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)} placeholder="Symbol / Strategy  (/)" className="tj-input" style={{ paddingLeft: 30, width: 200, height: 34 }} />
             {search && (
               <button onClick={() => setSearch('')} style={{ position: 'absolute', right: 8, background: 'none', border: 'none', color: T.muted, cursor: 'pointer', padding: 0 }}>
                 <X size={11} />
@@ -1454,6 +1581,54 @@ const handleAdd = useCallback(async (trade) => {
           </div>
         </div>
 
+        {/* ══ SESSION FILTER BAR ══ */}
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: '10px 16px', marginBottom: 14, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginRight: 4 }}>
+            <Globe size={12} color={T.sub} />
+            <span style={{ fontFamily: T.sans, fontSize: 10, fontWeight: 700, color: T.sub, textTransform: 'uppercase', letterSpacing: '.1em' }}>
+              Session
+            </span>
+          </div>
+
+          {[{ name: 'All', icon: '', color: T.accent, hours: 'All sessions' }, ...SESSIONS].map(s => {
+            const active = sessionFilter === s.name;
+            return (
+              <button key={s.name}
+                title={s.hours}
+                onClick={() => setSessionFilter(s.name)}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '5px 12px', fontSize: 10, fontFamily: T.mono, fontWeight: 700,
+                  borderRadius: 8, cursor: 'pointer', letterSpacing: '.03em',
+                  transition: 'all .15s',
+                  background: active ? `${s.color}22` : 'transparent',
+                  color: active ? s.color : T.sub,
+                  border: `1px solid ${active ? `${s.color}60` : T.border}`,
+                  boxShadow: active ? `0 2px 12px ${s.color}25` : 'none',
+                }}
+                onMouseEnter={e => { if (!active) { e.currentTarget.style.borderColor = `${s.color}50`; e.currentTarget.style.color = s.color; } }}
+                onMouseLeave={e => { if (!active) { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.sub; } }}>
+                {s.icon && <span style={{ fontSize: 12 }}>{s.icon}</span>}
+                {s.name}
+                <span style={{
+                  fontSize: 9, fontWeight: 800, padding: '0 6px', borderRadius: 10,
+                  background: active ? `${s.color}30` : `${T.muted}40`,
+                  color: active ? s.color : T.sub,
+                }}>
+                  {sessionCounts[s.name] ?? 0}
+                </span>
+              </button>
+            );
+          })}
+
+          {sessionFilter !== 'All' && (
+            <button onClick={() => setSessionFilter('All')}
+              style={{ marginLeft: 'auto', background: 'none', border: 'none', color: T.red, cursor: 'pointer', fontSize: 10, fontFamily: T.mono }}>
+              Clear
+            </button>
+          )}
+        </div>
+
         {/* ══ BULK ACTION BAR ══ */}
         {selected.size > 0 && (
           <div className="tj-pop" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', background: T.accentL, border: `1px solid ${T.accent}35`, borderRadius: 12, marginBottom: 12 }}>
@@ -1490,13 +1665,15 @@ const handleAdd = useCallback(async (trade) => {
                   {cols.date      && <TH col="date"      label="Date" />}
                   {cols.symbol    && <TH col="symbol"    label="Symbol" />}
                   {cols.side      && <TH col="side"      label="Side" sortable={false} />}
+                  {cols.session   && <TH col="session"   label="Session" />}
+                  {cols.strategy  && <TH col="strategy"  label="Strategy" />}
                   {cols.pnl       && <TH col="pnl"       label="P&L" />}
                   {cols.rMultiple && <TH col="rMultiple" label="R×" />}
                   {cols.tags      && <TH col="tags"      label="Tags" sortable={false} />}
                   {cols.notes     && <TH col="notes"     label="Notes" sortable={false} />}
                   <TH col="img"  label="📷" sortable={false} align="center" />
-                  {/* Delete column header — minimal */}
-                  <th style={{ padding: '13px 16px', background: T.surface, width: 80, borderBottom: `1px solid ${T.border}` }} />
+                  {/* Actions column header — minimal */}
+                  <th style={{ padding: '13px 16px', background: T.surface, width: 110, borderBottom: `1px solid ${T.border}` }} />
                 </tr>
               </thead>
 
@@ -1504,7 +1681,8 @@ const handleAdd = useCallback(async (trade) => {
                 {filteredTrades.map((trade, idx) => {
                   const tid   = trade.id ?? trade._id ?? `${trade.symbol}_${trade.date}_${trade.pnl}_${idx}`;
                   const isWin = trade.pnl > 0;
-                  const r     = rMultiple(trade.pnl);
+                  const r     = rOf(trade);
+                  const plannedR = plannedRR(trade);
                   const isExp = expanded === tid;
                   const isSel = selected.has(tid);
                   const tags  = tradeTags[tid] || [];
@@ -1512,6 +1690,7 @@ const handleAdd = useCallback(async (trade) => {
                   const imgs  = tradeImages[tid] || [];
                   const hasImages = imgs.length > 0;
                   const isDeleting = deletingId === tid;
+                  const sessionMeta = SESSION_MAP[trade.session];
 
                   return (
                     <React.Fragment key={tid}>
@@ -1545,7 +1724,7 @@ const handleAdd = useCallback(async (trade) => {
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: isWin ? T.green : T.red, boxShadow: `0 0 8px ${isWin ? T.green : T.red}80` }} />
                               <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 800, color: T.text, letterSpacing: '-0.3px' }}>
-                                {highlightSym(trade.symbol)}
+                                {highlight(trade.symbol)}
                               </span>
                               {hasImages && <span className="tj-img-dot" title={`${imgs.length} screenshot${imgs.length > 1 ? 's' : ''}`} />}
                             </div>
@@ -1560,6 +1739,24 @@ const handleAdd = useCallback(async (trade) => {
                                 {trade.side.toUpperCase()}
                               </span>
                             ) : <span style={{ color: T.muted }}>—</span>}
+                          </td>
+                        )}
+
+                        {/* Session */}
+                        {cols.session && (
+                          <td style={{ padding: '12px 16px' }}>
+                            <SessionPill session={trade.session} />
+                          </td>
+                        )}
+
+                        {/* Strategy */}
+                        {cols.strategy && (
+                          <td style={{ padding: '12px 16px' }}>
+                            {trade.strategy ? (
+                              <span style={{ display: 'inline-block', fontFamily: T.mono, fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 6, whiteSpace: 'nowrap', background: 'rgba(181,123,238,.12)', color: T.purple, border: `1px solid ${T.purple}35` }}>
+                                {highlight(trade.strategy)}
+                              </span>
+                            ) : <span style={{ color: T.muted, fontFamily: T.mono, fontSize: 10 }}>—</span>}
                           </td>
                         )}
 
@@ -1613,9 +1810,37 @@ const handleAdd = useCallback(async (trade) => {
                           )}
                         </td>
 
-                        {/* Actions: expand + delete */}
+                        {/* Actions: edit + delete + expand */}
                         <td style={{ padding: '12px 16px', textAlign: 'right' }} onClick={e => e.stopPropagation()}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
+                            {/* Edit button — hidden until row hover */}
+                            <div className="tj-delete-btn tj-tooltip-wrap">
+                              <button
+                                onClick={e => openEdit(e, trade)}
+                                style={{
+                                  width: 28, height: 28, borderRadius: 7,
+                                  background: 'transparent',
+                                  border: `1px solid ${T.border}40`,
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                  cursor: 'pointer', color: T.muted,
+                                  transition: 'all .15s',
+                                }}
+                                onMouseEnter={e => {
+                                  e.currentTarget.style.background = T.accentL;
+                                  e.currentTarget.style.borderColor = `${T.accent}40`;
+                                  e.currentTarget.style.color = T.accent;
+                                }}
+                                onMouseLeave={e => {
+                                  e.currentTarget.style.background = 'transparent';
+                                  e.currentTarget.style.borderColor = `${T.border}40`;
+                                  e.currentTarget.style.color = T.muted;
+                                }}
+                              >
+                                <Pencil size={12} />
+                              </button>
+                              <div className="tj-tooltip">Edit trade</div>
+                            </div>
+
                             {/* Delete button — hidden until row hover */}
                             <div className="tj-delete-btn tj-tooltip-wrap">
                               <button
@@ -1658,9 +1883,17 @@ const handleAdd = useCallback(async (trade) => {
                       {/* ── EXPANDED DETAIL ROW ── */}
                       {isExp && (
                         <tr key={`${tid}_exp`}>
-                          <td colSpan={Object.values(cols).filter(Boolean).length + 4}
+                          <td colSpan={Object.values(cols).filter(Boolean).length + 3}
                             style={{ padding: 0, background: T.cardHigh }}>
                             <div className="tj-scalein" style={{ padding: '24px 24px 28px', borderTop: `1px solid ${T.border}`, borderBottom: `1px solid ${T.border}22` }}>
+
+                              {/* Edit button */}
+                              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }} onClick={e => e.stopPropagation()}>
+                                <button className="tj-btn" onClick={e => openEdit(e, trade)}
+                                  style={{ background: T.accentL, border: `1px solid ${T.accent}35`, color: T.accent, padding: '6px 14px', fontSize: 10 }}>
+                                  <Pencil size={11} /> Edit Trade
+                                </button>
+                              </div>
 
                               {/* Notes + Tags */}
                               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
@@ -1709,16 +1942,20 @@ const handleAdd = useCallback(async (trade) => {
                                   </div>
 
                                   {/* Quick metrics */}
-                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8 }}>
+                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
                                     {[
-                                      { l: 'P&L',  v: `${isWin ? '+' : ''}${formatCurrency(trade.pnl)}`, c: isWin ? T.green : T.red },
-                                      { l: 'R×',   v: `${r >= 0 ? '+' : ''}${r}R`, c: r >= 1 ? T.green : r >= 0 ? T.accent : T.red },
-                                      { l: 'Date', v: dayjs(trade.date).format('MMM D'), c: T.textSoft },
-                                      { l: 'Side', v: (trade.side || '—').toUpperCase(), c: trade.side?.toLowerCase() === 'long' ? T.green : T.red },
+                                      { l: 'P&L',      v: `${isWin ? '+' : ''}${formatCurrency(trade.pnl)}`, c: isWin ? T.green : T.red },
+                                      { l: 'R×',       v: `${r >= 0 ? '+' : ''}${r}R`, c: r >= 1 ? T.green : r >= 0 ? T.accent : T.red },
+                                      { l: 'Planned RR', v: plannedR ? `1 : ${fix2(plannedR)}` : '—', c: plannedR ? T.cyan : T.muted },
+                                      { l: 'Date',     v: dayjs(trade.date).format('MMM D'), c: T.textSoft },
+                                      { l: 'Side',     v: (trade.side || '—').toUpperCase(), c: trade.side?.toLowerCase() === 'long' ? T.green : T.red },
+                                      { l: 'Strategy', v: trade.strategy || '—', c: trade.strategy ? T.purple : T.muted },
+                                      { l: 'Session',  v: sessionMeta ? `${sessionMeta.icon} ${sessionMeta.name}` : '—', c: sessionMeta ? sessionMeta.color : T.muted },
+                                      { l: 'Timeframe', v: trade.timeframe || '—', c: trade.timeframe ? T.textSoft : T.muted },
                                     ].map(({ l, v, c }) => (
-                                      <div key={l} style={{ background: T.card, borderRadius: 10, padding: '10px 12px', border: `1px solid ${T.border}` }}>
+                                      <div key={l} style={{ background: T.card, borderRadius: 10, padding: '10px 12px', border: `1px solid ${T.border}`, minWidth: 0 }}>
                                         <p style={{ fontFamily: T.sans, fontSize: 9, color: T.muted, textTransform: 'uppercase', letterSpacing: '.1em', marginBottom: 4 }}>{l}</p>
-                                        <p style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 800, color: c }}>{v}</p>
+                                        <p style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 800, color: c, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={String(v)}>{v}</p>
                                       </div>
                                     ))}
                                   </div>
@@ -1754,7 +1991,7 @@ const handleAdd = useCallback(async (trade) => {
                 {/* Empty state */}
                 {!filteredTrades.length && (
                   <tr>
-                    <td colSpan={10} style={{ padding: '72px 24px', textAlign: 'center' }}>
+                    <td colSpan={13} style={{ padding: '72px 24px', textAlign: 'center' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
                         <div style={{ width: 56, height: 56, borderRadius: 16, background: T.surface, border: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                           <BarChart2 size={24} color={T.muted} />
@@ -1785,10 +2022,17 @@ const handleAdd = useCallback(async (trade) => {
               <span style={{ fontFamily: T.mono, color: T.muted, fontSize: 10 }}>
                 {filteredTrades.length} rows
                 {selected.size > 0 && ` · ${selected.size} selected`}
+                {sessionFilter !== 'All' && ` · ${sessionFilter} session`}
                 {' · '}Avg R:{' '}
                 <span style={{ color: T.textSoft }}>
-                  {fix2(filteredTrades.reduce((s, t) => s + rMultiple(t.pnl), 0) / filteredTrades.length)}
+                  {fix2(filteredTrades.reduce((s, t) => s + rOf(t), 0) / filteredTrades.length)}
                 </span>
+                {stats.rrCount > 0 && (
+                  <>
+                    {' · '}Avg RR:{' '}
+                    <span style={{ color: T.cyan }}>1 : {stats.avgRR}</span>
+                  </>
+                )}
                 {deletedTrades.length > 0 && (
                   <span style={{ marginLeft: 12, color: T.muted }}>
                     ·{' '}
@@ -1820,8 +2064,14 @@ const handleAdd = useCallback(async (trade) => {
         </div>
       </div>
 
-      {/* ══ MODAL ══ */}
-      <AddTradeModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onAdd={handleAdd} />
+      {/* ══ MODAL (new + edit) ══ */}
+      <AddTradeModal
+        isOpen={modalOpen}
+        onClose={closeModal}
+        onAdd={handleAdd}
+        onUpdate={handleUpdate}
+        editingTrade={editingTrade}
+      />
     </div>
   );
 };

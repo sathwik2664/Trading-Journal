@@ -1,5 +1,7 @@
 const mongoose = require('mongoose');
 
+const SESSIONS = ['New York', 'Tokyo', 'London', 'Sydney', 'Indian'];
+
 const TradeSchema = new mongoose.Schema({
   symbol:      { type: String, required: true },
   tradeType:   { type: String, enum: ['crypto','forex','stocks','futures','indices','commodities'], default: 'futures' },
@@ -10,6 +12,7 @@ const TradeSchema = new mongoose.Schema({
   tp:          { type: Number, default: null },
   rr:          { type: Number, default: null },
   timeframe:   { type: String, default: null },
+  session:     { type: String, enum: [...SESSIONS, null], default: null }, // trading session the trade was taken in
   strategy:    { type: String, default: null },
   outcome:     { type: String, enum: ['Win','Loss','Breakeven',null], default: null },
   riskAmount:  { type: Number, default: null },
@@ -17,12 +20,12 @@ const TradeSchema = new mongoose.Schema({
   tags:        [{ type: String }],
   notes:       { type: String, default: null },
   screenshot:  { type: String, default: null }, // kept for backward compat
-images: [{
-  id:      { type: String },
-  src:     { type: String },
-  name:    { type: String },
-  addedAt: { type: String },
-}],
+  images: [{
+    id:      { type: String },
+    src:     { type: String },
+    name:    { type: String },
+    addedAt: { type: String },
+  }],
 }, { timestamps: true });
 
 module.exports = mongoose.model('Trade', TradeSchema);

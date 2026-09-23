@@ -1,9 +1,18 @@
 const Trade = require('../models/Trade');
 
+const VALID_SESSIONS = ['New York', 'Tokyo', 'London', 'Sydney', 'Indian'];
+
+// Normalize incoming session value: trim whitespace, treat '' / undefined as null,
+// and reject anything that isn't one of the known session names.
+const normalizeSession = (val) => {
+  if (val === undefined || val === null) return null;
+  const trimmed = String(val).trim();
+  if (!trimmed) return null;
+  return VALID_SESSIONS.includes(trimmed) ? trimmed : null;
+};
+
 exports.getAllTrades = async (req, res) => {
   try {
-    // ✅ CHANGED: was .select('-screenshot'), now also excludes src from images
-    // to keep list view fast — only metadata, not base64 blobs
     const trades = await Trade.find()
       .select('-screenshot -images.src')
       .sort({ date: -1 });
@@ -25,10 +34,12 @@ exports.getTradeById = async (req, res) => {
 
 exports.createTrade = async (req, res) => {
   try {
-    const trade = new Trade(req.body);
+    const payload = {
+      ...req.body,
+      session: normalizeSession(req.body.session),
+    };
+    const trade = new Trade(payload);
     const saved = await trade.save();
-    // ✅ CHANGED: was deleting screenshot and returning partial object.
-    // Now returns full saved doc including images array
     res.status(201).json(saved);
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -37,12 +48,14 @@ exports.createTrade = async (req, res) => {
 
 exports.updateTrade = async (req, res) => {
   try {
-    // ✅ CHANGED: was .select('-screenshot') which also stripped images.
-    // Now returns full doc so images persist correctly after update
+    const payload = { ...req.body };
+    if ('session' in payload) {
+      payload.session = normalizeSession(payload.session);
+    }
     const updated = await Trade.findByIdAndUpdate(
       req.params.id,
-      { $set: req.body },   // ✅ CHANGED: was req.body directly, $set allows partial updates
-      { new: true }
+      { $set: payload },
+      { new: true, runValidators: true } // ← runValidators added so enum errors surface clearly instead of silently
     );
     if (!updated) return res.status(404).json({ message: 'Trade not found' });
     res.json(updated);
@@ -60,7 +73,6 @@ exports.deleteTrade = async (req, res) => {
   }
 };
 
-// Separate endpoint to get screenshot only when needed (unchanged)
 exports.getTradeScreenshot = async (req, res) => {
   try {
     const trade = await Trade.findById(req.params.id).select('screenshot');
@@ -71,7 +83,6 @@ exports.getTradeScreenshot = async (req, res) => {
   }
 };
 
-// ✅ NEW: dedicated endpoint to get full images for a trade (with base64 src)
 exports.getTradeImages = async (req, res) => {
   try {
     const trade = await Trade.findById(req.params.id).select('images');

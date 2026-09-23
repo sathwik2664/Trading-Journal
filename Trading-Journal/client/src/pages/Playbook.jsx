@@ -1,12 +1,16 @@
 /**
  * Playbook.jsx — Trading Strategy Playbook
  * Select a strategy → see all trades + live win rate & P&L
+ *
+ * Data comes from the shared useSetups store (server = source of truth),
+ * so setups added here appear instantly in the Add Trade modal and on
+ * every other device after a sync.
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, Trash2, Edit3, Check, X, BookMarked, ChevronDown, AlertCircle, Sparkles, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { Plus, Trash2, Edit3, Check, X, BookMarked, AlertCircle, Sparkles, ArrowUpRight, ArrowDownRight, RefreshCw } from 'lucide-react';
 import { useTrades } from '../hooks/useTrades';
-import * as setupService from '../services/setupService';
+import { useSetups, errMsg } from '../hooks/useSetups';
 import dayjs from 'dayjs';
 
 /* ── Tokens ── */
@@ -66,7 +70,7 @@ const CATEGORIES = ['Momentum','Breakout','Reversal','Scalp','Swing','Mean Rever
 const EMPTY = { name:'', description:'', rules:'', tags:'', timeframes:[], marketCondition:'Any', notes:'', category:'' };
 
 /* ── Setup Modal ── */
-const Modal = ({ init, title, onSave, onClose }) => {
+const Modal = ({ init, title, onSave, onClose, existingNames }) => {
   const [f, setF] = useState(init || EMPTY);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -79,19 +83,23 @@ const Modal = ({ init, title, onSave, onClose }) => {
   }, [onClose]);
 
   const save = async () => {
-    if (!f.name.trim()) { setErr('Name required'); return; }
+    const name = f.name.trim();
+    if (!name) { setErr('Name required'); return; }
+    if (existingNames.includes(name.toLowerCase())) { setErr('A setup with this name already exists.'); return; }
     setLoading(true); setErr('');
     try {
       await onSave({
-        name: f.name.trim(), description: f.description.trim(),
+        name, description: f.description.trim(),
         rules: f.rules.split('\n').map(r => r.trim()).filter(Boolean),
         tags: f.tags.split(',').map(t => t.trim()).filter(Boolean),
         timeframes: f.timeframes, marketCondition: f.marketCondition,
         notes: f.notes.trim(), category: f.category,
       });
       onClose();
-    } catch { setErr('Something went wrong.'); }
-    finally { setLoading(false); }
+    } catch (e) {
+      console.error('Save setup failed:', e);
+      setErr(errMsg(e));
+    } finally { setLoading(false); }
   };
 
   const toggleTf = tf => set('timeframes', f.timeframes.includes(tf) ? f.timeframes.filter(t => t !== tf) : [...f.timeframes, tf]);
@@ -182,7 +190,7 @@ const Modal = ({ init, title, onSave, onClose }) => {
 
           {err && (
             <div style={{ display:'flex', gap:8, padding:'9px 12px', background:C.redL, border:`1px solid rgba(255,68,102,.25)`, borderRadius:9 }}>
-              <AlertCircle size={13} color={C.red} /><span style={{ fontSize:12, color:C.red, fontFamily:C.sans }}>{err}</span>
+              <AlertCircle size={13} color={C.red} style={{ flexShrink:0, marginTop:1 }} /><span style={{ fontSize:12, color:C.red, fontFamily:C.sans, lineHeight:1.5 }}>{err}</span>
             </div>
           )}
         </div>
@@ -216,9 +224,10 @@ Be direct, reference numbers, under 150 words. Format: **[Label]**: insight`;
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:1000, messages:[{role:'user',content:prompt}] }),
       });
+      if (!res.ok) throw new Error(`AI request failed (${res.status})`);
       const d = await res.json();
       setText(d.content?.map(b=>b.text||'').join('')||'No response.');
-    } catch { setErr('Network error.'); }
+    } catch (e) { setErr(e?.message?.startsWith('AI request') ? e.message : 'Network error.'); }
     setLoading(false);
   };
 
@@ -245,18 +254,18 @@ Be direct, reference numbers, under 150 words. Format: **[Label]**: insight`;
 /* ── Main ── */
 export default function Playbook() {
   const { trades } = useTrades();
-  const [setups, setSetups] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { setups, loading, error, refresh, addSetup, updateSetup, removeSetup } = useSetups();
   const [selected, setSelected] = useState(null); // setup._id
   const [modal, setModal] = useState(null);        // null | 'add' | setup obj (edit)
   const [delId, setDelId] = useState(null);
+  const [pageErr, setPageErr] = useState('');
+  const [syncing, setSyncing] = useState(false);
 
+  /* Keep a valid selection as the shared list changes (initial load, delete, sync from other device) */
   useEffect(() => {
-    setupService.getSetups()
-      .then(r => { setSetups(r.data); if (r.data.length) setSelected(r.data[0]._id); })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, []);
+    if (!setups.length) { if (selected !== null) setSelected(null); return; }
+    if (!selected || !setups.some(s => s._id === selected)) setSelected(setups[0]._id);
+  }, [setups, selected]);
 
   /* Stats per setup */
   const statsMap = useMemo(() => {
@@ -294,19 +303,21 @@ export default function Playbook() {
     return { totalPnl, avgWR, totalTrades };
   }, [setups, statsMap]);
 
-  /* CRUD */
-  const add    = async data => { const r = await setupService.createSetup(data); setSetups(p=>[r.data,...p]); setSelected(r.data._id); };
-  const update = async (id,data) => { const r = await setupService.updateSetup(id,data); setSetups(p=>p.map(s=>s._id===id?r.data:s)); };
+  /* CRUD (all go through the shared store → server → other devices) */
+  const add = async data => { const item = await addSetup(data); if (item?._id) setSelected(item._id); };
+  const update = async (id, data) => { await updateSetup(id, data); };
   const del = async id => {
-    await setupService.deleteSetup(id);
-    setSetups(p => p.filter(s => s._id !== id));
-    const fallback = setups.find(s => s._id !== id);
-    setSelected(p => (p === id ? (fallback ? fallback._id : null) : p));
+    try { await removeSetup(id); setPageErr(''); }
+    catch (e) { console.error('Delete setup failed:', e); setPageErr(errMsg(e)); }
     setDelId(null);
   };
 
+  const manualSync = async () => { setSyncing(true); await refresh(); setSyncing(false); };
+
   const activeSetup = setups.find(s => s._id === selected);
   const activeStats = selected ? statsMap[selected] : null;
+  const nameSet = (excludeId) => setups.filter(s => s._id !== excludeId).map(s => s.name.toLowerCase());
+  const bannerErr = pageErr || error;
 
   if (loading) return (
     <div style={{ minHeight:'100vh', background:C.bg, display:'flex', alignItems:'center', justifyContent:'center' }}>
@@ -323,10 +334,24 @@ export default function Playbook() {
           <BookMarked size={18} color={C.accent}/>
           <span style={{ fontFamily:C.sans, fontSize:18, fontWeight:800, color:C.text }}>Playbook</span>
         </div>
-        <button onClick={() => setModal('add')} className="pb-btn" style={{ background:C.accent, color:'#fff' }}>
-          <Plus size={14}/> New Setup
-        </button>
+        <div style={{ display:'flex', gap:8 }}>
+          <button onClick={manualSync} disabled={syncing} className="pb-btn" title="Sync from server" style={{ background:C.card, border:`1px solid ${C.border}`, color:C.sub }}>
+            <RefreshCw size={13} style={{ animation: syncing ? 'pb-spin .7s linear infinite' : 'none' }}/> Sync
+          </button>
+          <button onClick={() => setModal('add')} className="pb-btn" style={{ background:C.accent, color:'#fff' }}>
+            <Plus size={14}/> New Setup
+          </button>
+        </div>
       </div>
+
+      {/* ── Error banner ── */}
+      {bannerErr && (
+        <div className="pb-in" style={{ margin:'14px 24px 0', display:'flex', alignItems:'center', gap:10, padding:'10px 14px', background:C.redL, border:'1px solid rgba(255,68,102,.25)', borderRadius:10 }}>
+          <AlertCircle size={14} color={C.red} style={{ flexShrink:0 }}/>
+          <span style={{ flex:1, fontSize:12, color:C.red, fontFamily:C.sans, lineHeight:1.5 }}>{bannerErr}</span>
+          <button onClick={() => { setPageErr(''); refresh(); }} className="pb-btn" style={{ padding:'4px 12px', fontSize:10, background:'transparent', border:'1px solid rgba(255,68,102,.35)', color:C.red }}>Retry</button>
+        </div>
+      )}
 
       {/* ── Summary Stats ── */}
       <div className="pb-up" style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10, padding:'16px 24px 0', animationDelay:'40ms' }}>
@@ -378,9 +403,11 @@ export default function Playbook() {
         {/* Detail panel */}
         <div className="pb-scroll" style={{ flex:1, overflowY:'auto' }}>
           {!activeSetup ? (
-            <div style={{ textAlign:'center', padding:'60px 0', color:C.sub, fontSize:13 }}>Select a setup to view details</div>
+            <div style={{ textAlign:'center', padding:'60px 0', color:C.sub, fontSize:13 }}>
+              {setups.length === 0 ? 'Create your first setup with “New Setup”' : 'Select a setup to view details'}
+            </div>
           ) : (
-            <div className="pb-up">
+            <div className="pb-up" key={activeSetup._id}>
 
               {/* Setup header */}
               <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:16 }}>
@@ -458,7 +485,7 @@ export default function Playbook() {
                     {/* Rows */}
                     <div className="pb-scroll" style={{ maxHeight:320, overflowY:'auto' }}>
                       {activeStats.trades.map((t, i) => (
-                        <div key={i} className="pb-row" style={{ display:'grid', gridTemplateColumns:'1fr 80px 80px 90px 90px 80px', gap:4, padding:'9px 14px', borderBottom:`1px solid ${C.border}`, alignItems:'center' }}>
+                        <div key={t._id || t.id || i} className="pb-row" style={{ display:'grid', gridTemplateColumns:'1fr 80px 80px 90px 90px 80px', gap:4, padding:'9px 14px', borderBottom:`1px solid ${C.border}`, alignItems:'center' }}>
                           <span style={{ fontFamily:C.mono, fontSize:11, color:C.soft }}>{dayjs(t.date).format('MMM D, YY')}</span>
                           <span style={{ fontFamily:C.mono, fontSize:11, color:C.text, fontWeight:700 }}>{t.symbol||'—'}</span>
                           <span style={{ fontFamily:C.mono, fontSize:11, color: t.side?.toLowerCase()==='long'?C.green:C.red }}>{t.side||'—'}</span>
@@ -514,10 +541,10 @@ export default function Playbook() {
 
       {/* ── Modals ── */}
       {modal === 'add' && (
-        <Modal title="New Setup" onClose={() => setModal(null)} onSave={add}/>
+        <Modal title="New Setup" existingNames={nameSet(null)} onClose={() => setModal(null)} onSave={add}/>
       )}
       {modal && modal !== 'add' && (
-        <Modal title="Edit Setup" init={modal} onClose={() => setModal(null)} onSave={d => update(modal._id, d)}/>
+        <Modal title="Edit Setup" init={modal} existingNames={nameSet(modal._id)} onClose={() => setModal(null)} onSave={d => update(modal._id, d)}/>
       )}
       {delId && (
         <div onClick={e => e.target===e.currentTarget && setDelId(null)} style={{ position:'fixed',inset:0,zIndex:50,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(5,7,16,.85)',backdropFilter:'blur(8px)',padding:16 }}>
