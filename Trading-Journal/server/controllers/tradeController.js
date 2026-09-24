@@ -15,7 +15,8 @@ exports.getAllTrades = async (req, res) => {
   try {
     const trades = await Trade.find()
       .select('-screenshot -images.src')
-      .sort({ date: -1 });
+      .sort({ date: -1 })
+      .lean();
     res.json(trades);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -24,7 +25,7 @@ exports.getAllTrades = async (req, res) => {
 
 exports.getTradeById = async (req, res) => {
   try {
-    const trade = await Trade.findById(req.params.id);
+    const trade = await Trade.findById(req.params.id).lean();
     if (!trade) return res.status(404).json({ message: 'Trade not found' });
     res.json(trade);
   } catch (err) {
@@ -55,7 +56,7 @@ exports.updateTrade = async (req, res) => {
     const updated = await Trade.findByIdAndUpdate(
       req.params.id,
       { $set: payload },
-      { new: true, runValidators: true } // ← runValidators added so enum errors surface clearly instead of silently
+      { new: true, runValidators: true }
     );
     if (!updated) return res.status(404).json({ message: 'Trade not found' });
     res.json(updated);
@@ -75,7 +76,7 @@ exports.deleteTrade = async (req, res) => {
 
 exports.getTradeScreenshot = async (req, res) => {
   try {
-    const trade = await Trade.findById(req.params.id).select('screenshot');
+    const trade = await Trade.findById(req.params.id).select('screenshot').lean();
     if (!trade) return res.status(404).json({ message: 'Trade not found' });
     res.json({ screenshot: trade.screenshot });
   } catch (err) {
@@ -83,11 +84,25 @@ exports.getTradeScreenshot = async (req, res) => {
   }
 };
 
+// Returns the trade's images in ONE request. Older trades that only have the legacy
+// `screenshot` field get it returned as a single image, so the client needs no second call.
 exports.getTradeImages = async (req, res) => {
   try {
-    const trade = await Trade.findById(req.params.id).select('images');
+    const trade = await Trade.findById(req.params.id)
+      .select('images screenshot symbol createdAt')
+      .lean();
     if (!trade) return res.status(404).json({ message: 'Trade not found' });
-    res.json({ images: trade.images });
+
+    let images = (trade.images || []).filter(i => i.src);
+    if (!images.length && trade.screenshot) {
+      images = [{
+        id: `img_${trade._id}`,
+        src: trade.screenshot,
+        name: `${trade.symbol}_chart.png`,
+        addedAt: trade.createdAt,
+      }];
+    }
+    res.json({ images });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

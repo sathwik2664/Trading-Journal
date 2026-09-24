@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useSetups } from '../../hooks/useSetups';
+import { compressImage } from '../../utils/compressImage';
 import Modal from '../shared/Modal';
 import Button from '../shared/Button';
 
@@ -98,13 +99,6 @@ const DEFAULT_STRATEGIES = [
   'News / FOMC','Supply & Demand','Order Block','VWAP Bounce',
   'Gap Fill','Liquidity Grab','ICT / SMC','Mean Reversion',
 ];
-
-const toBase64 = (file) => new Promise((res, rej) => {
-  const r = new FileReader();
-  r.onload  = () => res(r.result);
-  r.onerror = () => rej(new Error('Read failed'));
-  r.readAsDataURL(file);
-});
 
 const calcRR = (entry, sl, tp, side) => {
   const e = parseFloat(entry), s = parseFloat(sl), t = parseFloat(tp);
@@ -330,11 +324,15 @@ const AddTradeModal = ({ isOpen, onClose, onAdd, onUpdate, editingTrade = null }
     setSymOpen(true);
   };
 
-  const handleScreenshot = useCallback(async (file) => {
+   const handleScreenshot = useCallback(async (file) => {
     if (!file || !file.type.startsWith('image/')) return;
-    const previewUrl = URL.createObjectURL(file);
-    const base64     = await toBase64(file);
-    set('screenshot', { file, previewUrl, base64 });
+    try {
+      const base64 = await compressImage(file);
+      set('screenshot', { file, previewUrl: base64, base64, sizeKB: Math.round(base64.length * 0.75 / 1024) });
+    } catch (err) {
+      console.error('Image compress failed', err);
+      alert('Could not process that image. Try another file.');
+    }
   }, []);
 
   const handleFileChange  = (e) => { if (e.target.files?.[0]) handleScreenshot(e.target.files[0]); };
@@ -783,7 +781,7 @@ const AddTradeModal = ({ isOpen, onClose, onAdd, onUpdate, editingTrade = null }
                 <button type="button" onClick={() => set('screenshot', null)} className="text-xs bg-red-500/20 hover:bg-red-500/40 text-red-400 px-3 py-1.5 rounded-lg backdrop-blur-sm">Remove</button>
               </div>
               <div className="absolute bottom-2 right-2 bg-black/60 text-gray-300 text-[10px] px-2 py-1 rounded-md backdrop-blur-sm">
-                {form.screenshot.file ? `${(form.screenshot.file.size / 1024).toFixed(0)} KB` : 'Saved'}
+                {form.screenshot.sizeKB ? `${form.screenshot.sizeKB} KB` : 'Saved'}
               </div>
             </div>
           ) : (

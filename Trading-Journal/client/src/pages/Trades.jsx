@@ -552,29 +552,47 @@ function Lightbox({ src, onClose }) {
   );
 }
 
+/* Resize + JPEG-compress a screenshot before it is stored (keeps DB payloads small) */
+const compressImage = (file, maxW = 1600, quality = 0.8) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onerror = reject;
+  reader.onload = () => {
+    const img = new window.Image();
+    img.onerror = reject;
+    img.onload = () => {
+      const scale = Math.min(1, maxW / img.width);
+      const c = document.createElement('canvas');
+      c.width  = Math.round(img.width * scale);
+      c.height = Math.round(img.height * scale);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      resolve(c.toDataURL('image/jpeg', quality));
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+});
+
 /* ══ Trade Image Panel ══ */
-function TradeImagePanel({ tradeId, images, onImagesChange }) {
+function TradeImagePanel({ tradeId, images, onImagesChange, loading }) {
   const [dragOver, setDragOver] = useState(false);
   const [lightbox, setLightbox] = useState(null);
   const fileRef = useRef();
   const handleFiles = useCallback((files) => {
     const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
     if (!imageFiles.length) return;
-    imageFiles.forEach(file => {
-      const reader = new FileReader();
-      reader.onload = e => {
+        imageFiles.forEach(file => {
+      compressImage(file).then(src => {
         onImagesChange(prev => ({
           ...prev,
           [tradeId]: [...(prev[tradeId] || []), {
             id: `img_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-            src: e.target.result,
+            src,
             name: file.name,
             size: file.size,
             addedAt: new Date().toISOString(),
           }]
         }));
-      };
-      reader.readAsDataURL(file);
+      }).catch(err => console.error('Image compress failed', err));
     });
   }, [tradeId, onImagesChange]);
 
@@ -594,7 +612,7 @@ function TradeImagePanel({ tradeId, images, onImagesChange }) {
         <div style={{ width: 24, height: 24, borderRadius: 6, background: T.accentL, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Image size={12} color={T.accent} />
         </div>
-        <span style={{ fontFamily: T.sans, fontSize: 11, fontWeight: 700, color: T.textSoft, textTransform: 'uppercase', letterSpacing: '.1em' }}>
+                <span style={{ fontFamily: T.sans, fontSize: 11, fontWeight: 700, color: T.textSoft, textTransform: 'uppercase', letterSpacing: '.1em' }}>
           Trade Screenshots
         </span>
         {tradeImages.length > 0 && (
@@ -603,6 +621,13 @@ function TradeImagePanel({ tradeId, images, onImagesChange }) {
           </span>
         )}
       </div>
+
+      {loading && tradeImages.length === 0 && (
+        <div style={{ aspectRatio: '16/9', borderRadius: 10, background: T.surface, border: `1px solid ${T.border}`, position: 'relative', overflow: 'hidden', marginBottom: 10 }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(90deg,transparent,rgba(79,142,247,.08),transparent)', animation: 'tj-shimmer 1.2s ease infinite' }} />
+        </div>
+      )}
+
       {tradeImages.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: tradeImages.length === 1 ? '1fr' : 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8, marginBottom: 10 }}>
           {tradeImages.map(img => (
@@ -881,6 +906,13 @@ const { applyTradePnl, removeTradePnl } = useAccount();
   const [importOk,     setImportOk]     = useState('');
   const [dragOver,     setDragOver]     = useState(false);
   const [deletingId,   setDeletingId]   = useState(null);
+
+
+  const [imgLoading, setImgLoading] = useState({});
+  const imgFetched  = useRef(new Set());  // ids already loaded (including "has no images")
+  const imgInflight = useRef({});         // id -> Promise, so hover-prefetch and click share one request
+  const hoverTimer  = useRef();
+
 
   // ── Recycle Bin state ──────────────────────────────────────
   const [deletedTrades, setDeletedTrades] = useState(() => {
@@ -1180,36 +1212,52 @@ const handleBulkDelete = useCallback(() => {
   });
 
   /* ── Expand toggle ── */
-  const toggleExpand = useCallback(async (id) => {
-  setExpanded(cur => cur === id ? null : id);
-  if (expanded === id) return;
-  const existing = tradeImages[id] || [];
-  const hasFullImages = existing.some(img => img.src);
-  if (!hasFullImages) {
-    try {
-      const imgs = await fetchTradeImages(id);
-      if (imgs?.length) {
-        setTradeImages(prev => ({ ...prev, [id]: imgs }));
-      } else {
-        const { getTradeById } = await import('../services/tradeService');
-        const res = await getTradeById(id);
-        if (res.data?.screenshot) {
-          setTradeImages(prev => ({
-            ...prev,
-            [id]: [{
+  /* ── Load a trade's images once; concurrent callers share the same request ── */
+  const loadImages = useCallback((id) => {
+    if (imgFetched.current.has(id)) return Promise.resolve();
+    if ((tradeImages[id] || []).some(img => img.src)) { imgFetched.current.add(id); return Promise.resolve(); }
+    if (imgInflight.current[id]) return imgInflight.current[id];
+
+    setImgLoading(p => ({ ...p, [id]: true }));
+    const p = (async () => {
+      try {
+        let imgs = await fetchTradeImages(id);
+        if (!imgs?.length) {
+          const { getTradeById } = await import('../services/tradeService');
+          const res = await getTradeById(id);
+          if (res.data?.screenshot) {
+            imgs = [{
               id: `img_${id}`,
               src: res.data.screenshot,
               name: `${res.data.symbol}_chart.png`,
               addedAt: res.data.createdAt,
-            }]
-          }));
+            }];
+          }
         }
+        if (imgs?.length) setTradeImages(prev => ({ ...prev, [id]: imgs }));
+        imgFetched.current.add(id);          // cache "loaded" (even if empty) so we never refetch
+      } catch (e) {
+        console.error('Failed to load images', e);   // not cached → retries on next expand
+      } finally {
+        delete imgInflight.current[id];
+        setImgLoading(p => ({ ...p, [id]: false }));
       }
-    } catch (e) {
-      console.error('Failed to load images', e);
-    }
-  }
-}, [expanded, tradeImages, fetchTradeImages]);
+    })();
+    imgInflight.current[id] = p;
+    return p;
+  }, [tradeImages, fetchTradeImages]);
+
+  const toggleExpand = useCallback((id) => {
+    setExpanded(cur => cur === id ? null : id);
+    if (expanded !== id) loadImages(id);
+  }, [expanded, loadImages]);
+
+  /* Start loading after a short hover so the image is often ready by the time you click */
+  const prefetchOnHover = useCallback((id) => {
+    clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => loadImages(id), 250);
+  }, [loadImages]);
+  const cancelPrefetch = useCallback(() => clearTimeout(hoverTimer.current), []);
 
   /* ── Export ── */
   const exportCSV = (subset = null) => {
@@ -1698,6 +1746,8 @@ const handleUpdate = useCallback(async (id, payload) => {
                       <tr
                         className={`tj-row${isSel ? ' selected' : ''}${isExp ? ' expanded' : ''}${isDeleting ? ' deleting' : ''}`}
                         onClick={() => toggleExpand(tid)}
+                        onMouseEnter={() => prefetchOnHover(tid)}
+                        onMouseLeave={cancelPrefetch}
                         style={{ borderBottom: `1px solid ${T.border}` }}
                       >
                         {/* Checkbox */}
@@ -1967,9 +2017,10 @@ const handleUpdate = useCallback(async (id, payload) => {
 
                               {/* Image section */}
                               <div onClick={e => e.stopPropagation()}>
-                                <TradeImagePanel
+                                                                <TradeImagePanel
                                   tradeId={tid}
                                   images={tradeImages}
+                                  loading={!!imgLoading[tid]}
                                   onImagesChange={(updaterFn) => {
                                     setTradeImages(prev => {
                                       const next = typeof updaterFn === 'function' ? updaterFn(prev) : updaterFn;
