@@ -1,8 +1,6 @@
-import axios from 'axios';
+import api from './api';
 
-const BASE = 'http://localhost:5000/api/setups';
-
-export const getSetups    = ()          => axios.get(BASE);
-export const createSetup  = (data)      => axios.post(BASE, data);
-export const updateSetup  = (id, data)  => axios.put(`${BASE}/${id}`, data);
-export const deleteSetup  = (id)        => axios.delete(`${BASE}/${id}`);
+export const getSetups    = ()          => api.get('/setups');
+export const createSetup  = (data)      => api.post('/setups', data);
+export const updateSetup  = (id, data)  => api.put(`/setups/${id}`, data);
+export const deleteSetup  = (id)        => api.delete(`/setups/${id}`);
