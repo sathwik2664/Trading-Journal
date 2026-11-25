@@ -3,6 +3,8 @@
  * Features: Delete → Recycle Bin → 30-day expiry → Restore
  *           Edit trades · Strategy column + search · Accurate Avg RR
  *           Trading session (New York / London / Tokyo / Sydney / Indian) column + filter
+ *           Notes synced with Add/Edit Trade modal (saved to DB)
+ *           Followed-rules (Yes / No) column + filter
  */
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useTrades } from '../hooks/useTrades';
@@ -15,7 +17,8 @@ import {
   Download, Upload, Tag, SlidersHorizontal,
   X, ChevronRight, BarChart2, FileText,
   Zap, Activity, Target, Calendar, Image, ZoomIn, Trash2,
-  RotateCcw, Clock, AlertTriangle, Eraser, Pencil, Globe
+  RotateCcw, Clock, AlertTriangle, Eraser, Pencil, Globe,
+  ShieldCheck
 } from 'lucide-react';
 import dayjs from 'dayjs';
 
@@ -371,6 +374,13 @@ const TAG_COLORS = {
   'Swing':      ['#7cb9f7','rgba(124,185,247,.10)'],
 };
 
+/* ══ Followed-rules filter options ══ */
+const RULES_FILTERS = [
+  { key: 'All', label: 'All', color: T.accent },
+  { key: 'Yes', label: 'Yes', color: T.green  },
+  { key: 'No',  label: 'No',  color: T.red    },
+];
+
 /* ══ Days remaining in bin ══ */
 function daysRemaining(deletedAt) {
   const deleted = dayjs(deletedAt);
@@ -488,6 +498,25 @@ const SessionPill = ({ session, children }) => {
       background: `${meta.color}1a`, color: meta.color, border: `1px solid ${meta.color}35`,
     }}>
       <span style={{ fontSize: 11 }}>{meta.icon}</span>{children ?? session}
+    </span>
+  );
+};
+
+/* ══ Followed-rules pill (table cell) ══ */
+const RulesPill = ({ followed }) => {
+  if (followed !== true && followed !== false) {
+    return <span style={{ color: T.muted, fontFamily: T.mono, fontSize: 10 }}>—</span>;
+  }
+  const ok = followed === true;
+  const c  = ok ? T.green : T.red;
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 5,
+      fontFamily: T.mono, fontSize: 10, fontWeight: 800,
+      padding: '3px 10px', borderRadius: 6, whiteSpace: 'nowrap', letterSpacing: '.04em',
+      background: ok ? T.greenL : T.redL, color: c, border: `1px solid ${c}35`,
+    }}>
+      {ok ? '✓' : '✗'} {ok ? 'YES' : 'NO'}
     </span>
   );
 };
@@ -890,6 +919,7 @@ const { applyTradePnl, removeTradePnl } = useAccount();
   const [editingTrade, setEditingTrade] = useState(null);
   const [filter,       setFilter]       = useState('All');
   const [sessionFilter, setSessionFilter] = useState('All');
+  const [rulesFilter,  setRulesFilter]  = useState('All');          // ← NEW: All | Yes | No
   const [search,       setSearch]       = useState('');
   const [dateFrom,     setDateFrom]     = useState('');
   const [dateTo,       setDateTo]       = useState('');
@@ -897,6 +927,7 @@ const { applyTradePnl, removeTradePnl } = useAccount();
   const [sort,         setSort]         = useState({ key: 'date', dir: -1 });
   const [selected,     setSelected]     = useState(new Set());
   const [expanded,     setExpanded]     = useState(null);
+  // tradeNotes holds ONLY notes edited on this page; otherwise the trade's saved `notes` (from the modal / DB) is used
   const [tradeNotes,   setTradeNotes]   = useState({});
   const [tradeTags,    setTradeTags]    = useState({});
   const [tradeImages,  setTradeImages]  = useState({});
@@ -912,6 +943,7 @@ const { applyTradePnl, removeTradePnl } = useAccount();
   const imgFetched  = useRef(new Set());  // ids already loaded (including "has no images")
   const imgInflight = useRef({});         // id -> Promise, so hover-prefetch and click share one request
   const hoverTimer  = useRef();
+  const noteTimers  = useRef({});         // dbId -> debounce timer for saving notes
 
 
   // ── Recycle Bin state ──────────────────────────────────────
@@ -929,7 +961,7 @@ const { applyTradePnl, removeTradePnl } = useAccount();
 
   const [cols, setCols] = useState({
     date: true, symbol: true, side: true, session: true, strategy: true, pnl: true,
-    rMultiple: true, tags: true, notes: false,
+    rMultiple: true, rules: true, tags: true, notes: false,
   });
 
   const fileRef    = useRef();
@@ -979,6 +1011,25 @@ useEffect(() => {
   });
 }, [trades]);
 
+  /* ── Notes: single source of truth ──
+     Page edits (tradeNotes) win; otherwise use the notes saved with the trade (written in the Add/Edit modal). */
+  const noteOf = useCallback((t, tid) => {
+    const local = tradeNotes[tid];
+    return local !== undefined ? local : (t?.notes || '');
+  }, [tradeNotes]);
+
+  /* ── Save notes typed on this page back to the trade (debounced; blur saves immediately) ── */
+  const saveNote = useCallback((dbId, text, immediate = false) => {
+    if (!dbId) return;
+    clearTimeout(noteTimers.current[dbId]);
+    const run = () => {
+      delete noteTimers.current[dbId];
+      Promise.resolve(editTrade(dbId, { notes: text || null })).catch(e => console.error('Failed to save notes', e));
+    };
+    if (immediate) run();
+    else noteTimers.current[dbId] = setTimeout(run, 600);
+  }, [editTrade]);
+
   /* ── Modal open / close (new + edit share the same modal) ── */
   const openNew = useCallback(() => { setEditingTrade(null); setModalOpen(true); }, []);
   const openEdit = useCallback((e, trade) => {
@@ -1004,7 +1055,7 @@ const tid = trade._id ?? trade.id ?? `${trade.symbol}_${trade.date}_${trade.pnl}
           ...trade,
           tid,
           deletedAt: new Date().toISOString(),
-          notes:  tradeNotes[tid] || '',
+          notes:  noteOf(trade, tid),
           tags:   tradeTags[tid]  || [],
           imgs:   tradeImages[tid] || [],
         }];
@@ -1015,21 +1066,20 @@ const tid = trade._id ?? trade.id ?? `${trade.symbol}_${trade.date}_${trade.pnl}
       if (typeof deleteTrade === 'function') {
         deleteTrade(trade._id || trade.id);
       }
-      if (trade._id || trade.id) removeTradePnl(trade._id || trade.id); // ← ADD THIS LINE
+      if (trade._id || trade.id) removeTradePnl(trade._id || trade.id);
       // Collapse if expanded
       setExpanded(cur => cur === tid ? null : cur);
     }, 320);
-  }, [tradeNotes, tradeTags, tradeImages, deleteTrade, removeTradePnl]);
+  }, [noteOf, tradeTags, tradeImages, deleteTrade, removeTradePnl]);
 
   /* ── Restore from bin ── */
   const handleRestore = useCallback((tid) => {
     const trade = deletedTrades.find(t => t.tid === tid);
     if (!trade) return;
-    // Add back to trades
+    // Add back to trades (notes go back with the trade so they're saved again)
     const { deletedAt, tid: _tid, notes, tags, imgs, ...tradeData } = trade;
-    addTrade(tradeData);
-    // Restore notes/tags/images
-    if (notes) setTradeNotes(prev => ({ ...prev, [tid]: notes }));
+    addTrade({ ...tradeData, notes: notes || null });
+    // Restore tags/images (notes now live on the trade itself)
     if (tags?.length) setTradeTags(prev => ({ ...prev, [tid]: tags }));
     if (imgs?.length) setTradeImages(prev => ({ ...prev, [tid]: imgs }));
     // Remove from bin
@@ -1075,6 +1125,9 @@ const tid = trade._id ?? trade.id ?? `${trade.symbol}_${trade.date}_${trade.pnl}
         if (filter !== 'All' && filter !== outcome && t.side !== filter) return false;
         // Session filter
         if (sessionFilter !== 'All' && t.session !== sessionFilter) return false;
+        // Followed-rules filter
+        if (rulesFilter === 'Yes' && t.followedRules !== true)  return false;
+        if (rulesFilter === 'No'  && t.followedRules !== false) return false;
         // Search matches symbol OR strategy name
         if (q && !(t.symbol || '').toLowerCase().includes(q) && !(t.strategy || '').toLowerCase().includes(q)) return false;
         if (dateFrom && dayjs(t.date).isBefore(dayjs(dateFrom))) return false;
@@ -1089,10 +1142,14 @@ const tid = trade._id ?? trade.id ?? `${trade.symbol}_${trade.date}_${trade.pnl}
         if (sort.key === 'date') { va = new Date(va); vb = new Date(vb); }
         if (sort.key === 'strategy') { va = (a.strategy || '').toLowerCase(); vb = (b.strategy || '').toLowerCase(); }
         if (sort.key === 'session') { va = (a.session || '').toLowerCase(); vb = (b.session || '').toLowerCase(); }
+        if (sort.key === 'rules') {
+          const rank = t => t.followedRules === true ? 2 : t.followedRules === false ? 1 : 0;
+          va = rank(a); vb = rank(b);
+        }
         if (sort.key === 'rMultiple') { va = rOf(a); vb = rOf(b); }
         return sort.dir * (va > vb ? 1 : va < vb ? -1 : 0);
       });
-  }, [trades, filter, sessionFilter, search, dateFrom, dateTo, tagFilter, tradeTags, sort, deletedTrades, rOf]);
+  }, [trades, filter, sessionFilter, rulesFilter, search, dateFrom, dateTo, tagFilter, tradeTags, sort, deletedTrades, rOf]);
 
   /* ── Trade count per session (for the filter chips; excludes trades in the bin) ── */
   const sessionCounts = useMemo(() => {
@@ -1108,6 +1165,20 @@ const tid = trade._id ?? trade.id ?? `${trade.symbol}_${trade.date}_${trade.pnl}
     return counts;
   }, [trades, deletedTrades]);
 
+  /* ── Trade count per followed-rules answer (for the filter chips) ── */
+  const rulesCounts = useMemo(() => {
+    const binIds = new Set(deletedTrades.map(t => t.tid));
+    const counts = { All: 0, Yes: 0, No: 0 };
+    trades.forEach(t => {
+      const tid = t.id ?? t._id ?? `${t.symbol}_${t.date}_${t.pnl}`;
+      if (binIds.has(tid)) return;
+      counts.All += 1;
+      if (t.followedRules === true)  counts.Yes += 1;
+      if (t.followedRules === false) counts.No  += 1;
+    });
+    return counts;
+  }, [trades, deletedTrades]);
+
 
 /* ── Bulk delete selected ── */
 const handleBulkDelete = useCallback(() => {
@@ -1119,13 +1190,13 @@ const handleBulkDelete = useCallback(() => {
     const tid = t.id ?? t._id ?? `${t.symbol}_${t.date}_${t.pnl}_${i}`;
     setDeletedTrades(prev => {
       if (prev.find(x => x.tid === tid)) return prev;
-      return [...prev, { ...t, tid, deletedAt: new Date().toISOString(), notes: tradeNotes[tid] || '', tags: tradeTags[tid] || [], imgs: tradeImages[tid] || [] }];
+      return [...prev, { ...t, tid, deletedAt: new Date().toISOString(), notes: noteOf(t, tid), tags: tradeTags[tid] || [], imgs: tradeImages[tid] || [] }];
     });
     if (typeof deleteTrade === 'function') deleteTrade(t._id || t.id);
-    if (t._id || t.id) removeTradePnl(t._id || t.id); // ← ADD THIS LINE
+    if (t._id || t.id) removeTradePnl(t._id || t.id);
   });
   setSelected(new Set());
-}, [selected, filteredTrades, tradeNotes, tradeTags, tradeImages, deleteTrade, removeTradePnl]);
+}, [selected, filteredTrades, noteOf, tradeTags, tradeImages, deleteTrade, removeTradePnl]);
 
 
   /* ── Stats ── */
@@ -1261,10 +1332,12 @@ const handleBulkDelete = useCallback(() => {
 
   /* ── Export ── */
   const exportCSV = (subset = null) => {
-    const rows = (subset || filteredTrades).map(t =>
-      `${t.date},${t.symbol},${t.side || ''},"${t.session || ''}","${(t.strategy || '').replace(/"/g, "'")}",${t.pnl},${rOf(t)},"${(tradeNotes[t.id] || '').replace(/"/g, "'")}","${(tradeTags[t.id] || []).join(';')}"`
-    );
-    const blob = new Blob([['Date,Symbol,Side,Session,Strategy,PnL,R-Multiple,Notes,Tags', ...rows].join('\n')], { type: 'text/csv' });
+    const rows = (subset || filteredTrades).map(t => {
+      const tid = t.id ?? t._id ?? `${t.symbol}_${t.date}_${t.pnl}`;
+      const rules = t.followedRules === true ? 'Yes' : t.followedRules === false ? 'No' : '';
+      return `${t.date},${t.symbol},${t.side || ''},"${t.session || ''}","${(t.strategy || '').replace(/"/g, "'")}",${t.pnl},${rOf(t)},${rules},"${noteOf(t, tid).replace(/"/g, "'")}","${(tradeTags[tid] || []).join(';')}"`;
+    });
+    const blob = new Blob([['Date,Symbol,Side,Session,Strategy,PnL,R-Multiple,Followed Rules,Notes,Tags', ...rows].join('\n')], { type: 'text/csv' });
     const a = Object.assign(document.createElement('a'), {
       href: URL.createObjectURL(blob),
       download: `trades_${dayjs().format('YYYY-MM-DD')}.csv`,
@@ -1290,7 +1363,7 @@ const handleBulkDelete = useCallback(() => {
 const handleAdd = useCallback(async (trade) => {
   const saved = await addTrade(trade);
   if (saved?.pnl > 0) setTimeout(spawnConfetti, 100);
-  if (saved?._id) await applyTradePnl(saved.pnl, saved._id, saved.symbol); // ← ADD THIS LINE
+  if (saved?._id) await applyTradePnl(saved.pnl, saved._id, saved.symbol);
   const src = saved?.screenshot;
   if (src && saved?._id) {
     const image = {
@@ -1304,12 +1377,18 @@ const handleAdd = useCallback(async (trade) => {
       [saved._id]: [image],
     }));
   }
+  // Notes written in the modal are saved on the trade itself (trade.notes) and shown via noteOf()
 }, [addTrade, applyTradePnl]);
 
   /* ── Update (edit) trade ── */
 const handleUpdate = useCallback(async (id, payload) => {
   const old = trades.find(t => (t._id ?? t.id) === id);
   await editTrade(id, payload);
+
+  // Notes edited in the modal → show them immediately in the row's Notes box
+  if (payload.notes !== undefined) {
+    setTradeNotes(prev => ({ ...prev, [id]: payload.notes || '' }));
+  }
 
   // Keep the account balance in sync if P&L or symbol changed
   const pnlChanged    = (Number(old?.pnl) || 0) !== (Number(payload.pnl) || 0);
@@ -1404,21 +1483,6 @@ const handleUpdate = useCallback(async (id, payload) => {
                 title="Recycle Bin"
               >
                 <Trash2 size={12} />
-                {/* {binHasItems && (
-                  <span style={{
-                    position: 'absolute', top: -4, right: -4,
-                    minWidth: 16, height: 16, borderRadius: 8,
-                    background: urgentBinCount > 0 ? T.red : T.muted,
-                    color: '#fff',
-                    fontFamily: T.mono, fontSize: 8, fontWeight: 800,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    padding: '0 4px',
-                    boxShadow: urgentBinCount > 0 ? `0 0 8px ${T.red}60` : 'none',
-                    border: `1.5px solid ${T.bg}`,
-                  }}>
-                    {deletedTrades.length}
-                  </span>
-                )} */}
               </button>
               <div className="tj-tooltip">
                 Recycle Bin{binHasItems ? ` · ${deletedTrades.length} item${deletedTrades.length > 1 ? 's' : ''}` : ' · Empty'}
@@ -1608,6 +1672,47 @@ const handleUpdate = useCallback(async (id, payload) => {
 
           <div style={{ flex: 1 }} />
 
+          {/* ── Followed rules filter (beside Tags) ── */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }} title="Did you follow all your rules?">
+              <ShieldCheck size={12} color={T.sub} />
+              <span style={{ fontFamily: T.sans, fontSize: 10, fontWeight: 700, color: T.sub, textTransform: 'uppercase', letterSpacing: '.1em', whiteSpace: 'nowrap' }}>
+                Rules
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 2, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 3 }}>
+              {RULES_FILTERS.map(r => {
+                const active = rulesFilter === r.key;
+                return (
+                  <button key={r.key}
+                    onClick={() => setRulesFilter(r.key)}
+                    title={r.key === 'All' ? 'All trades' : r.key === 'Yes' ? 'Followed all rules' : 'Broke a rule'}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      padding: '5px 12px', fontSize: 10, fontFamily: T.mono, fontWeight: 700,
+                      border: 'none', cursor: 'pointer', borderRadius: 8, letterSpacing: '.04em',
+                      background: active ? `${r.color}25` : 'transparent',
+                      color: active ? r.color : T.sub,
+                      boxShadow: active ? `0 2px 12px ${r.color}25` : 'none',
+                      transition: 'all .15s',
+                    }}>
+                    {r.key === 'Yes' ? '✓ ' : r.key === 'No' ? '✗ ' : ''}{r.label}
+                    <span style={{
+                      fontSize: 9, fontWeight: 800, padding: '0 6px', borderRadius: 10,
+                      background: active ? `${r.color}30` : `${T.muted}40`,
+                      color: active ? r.color : T.sub,
+                    }}>
+                      {rulesCounts[r.key] ?? 0}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ width: 1, height: 28, background: T.border }} />
+
+          {/* ── Tags ── */}
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
             <Tag size={11} color={T.sub} />
             {tagFilter.map(t => (
@@ -1717,6 +1822,7 @@ const handleUpdate = useCallback(async (id, payload) => {
                   {cols.strategy  && <TH col="strategy"  label="Strategy" />}
                   {cols.pnl       && <TH col="pnl"       label="P&L" />}
                   {cols.rMultiple && <TH col="rMultiple" label="R×" />}
+                  {cols.rules     && <TH col="rules"     label="Rules" />}
                   {cols.tags      && <TH col="tags"      label="Tags" sortable={false} />}
                   {cols.notes     && <TH col="notes"     label="Notes" sortable={false} />}
                   <TH col="img"  label="📷" sortable={false} align="center" />
@@ -1728,17 +1834,20 @@ const handleUpdate = useCallback(async (id, payload) => {
               <tbody>
                 {filteredTrades.map((trade, idx) => {
                   const tid   = trade.id ?? trade._id ?? `${trade.symbol}_${trade.date}_${trade.pnl}_${idx}`;
+                  const dbId  = trade._id ?? trade.id;
                   const isWin = trade.pnl > 0;
                   const r     = rOf(trade);
                   const plannedR = plannedRR(trade);
                   const isExp = expanded === tid;
                   const isSel = selected.has(tid);
                   const tags  = tradeTags[tid] || [];
-                  const note  = tradeNotes[tid] || '';
+                  const note  = noteOf(trade, tid);
                   const imgs  = tradeImages[tid] || [];
                   const hasImages = imgs.length > 0;
                   const isDeleting = deletingId === tid;
                   const sessionMeta = SESSION_MAP[trade.session];
+                  const rulesVal = trade.followedRules;
+                  const mistakes = Array.isArray(trade.mistakes) ? trade.mistakes : [];
 
                   return (
                     <React.Fragment key={tid}>
@@ -1826,6 +1935,13 @@ const handleUpdate = useCallback(async (id, payload) => {
                             <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 6, background: r >= 2 ? T.greenL : r >= 0 ? T.accentL : T.redL, color: r >= 2 ? T.green : r >= 0 ? T.accent : T.red, border: `1px solid ${r >= 2 ? `${T.green}30` : r >= 0 ? `${T.accent}30` : `${T.red}30`}` }}>
                               {r >= 0 ? '+' : ''}{r}R
                             </span>
+                          </td>
+                        )}
+
+                        {/* Followed rules */}
+                        {cols.rules && (
+                          <td style={{ padding: '12px 16px' }} title={rulesVal === false && mistakes.length ? mistakes.join(', ') : undefined}>
+                            <RulesPill followed={rulesVal} />
                           </td>
                         )}
 
@@ -1947,7 +2063,7 @@ const handleUpdate = useCallback(async (id, payload) => {
 
                               {/* Notes + Tags */}
                               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
-                                {/* Left — Notes */}
+                                {/* Left — Notes (synced with the Add / Edit Trade modal) */}
                                 <div>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                                     <div style={{ width: 24, height: 24, borderRadius: 6, background: T.accentL, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1957,7 +2073,12 @@ const handleUpdate = useCallback(async (id, payload) => {
                                   </div>
                                   <textarea
                                     value={note}
-                                    onChange={e => setTradeNotes(n => ({ ...n, [tid]: e.target.value }))}
+                                    onChange={e => {
+                                      const v = e.target.value;
+                                      setTradeNotes(n => ({ ...n, [tid]: v }));
+                                      saveNote(dbId, v);
+                                    }}
+                                    onBlur={e => saveNote(dbId, e.target.value, true)}
                                     onClick={e => e.stopPropagation()}
                                     placeholder="What went well? What would you do differently? Key lessons..."
                                     rows={5}
@@ -2002,6 +2123,7 @@ const handleUpdate = useCallback(async (id, payload) => {
                                       { l: 'Strategy', v: trade.strategy || '—', c: trade.strategy ? T.purple : T.muted },
                                       { l: 'Session',  v: sessionMeta ? `${sessionMeta.icon} ${sessionMeta.name}` : '—', c: sessionMeta ? sessionMeta.color : T.muted },
                                       { l: 'Timeframe', v: trade.timeframe || '—', c: trade.timeframe ? T.textSoft : T.muted },
+                                      { l: 'Followed Rules', v: rulesVal === true ? '✓ Yes' : rulesVal === false ? '✗ No' : '—', c: rulesVal === true ? T.green : rulesVal === false ? T.red : T.muted },
                                     ].map(({ l, v, c }) => (
                                       <div key={l} style={{ background: T.card, borderRadius: 10, padding: '10px 12px', border: `1px solid ${T.border}`, minWidth: 0 }}>
                                         <p style={{ fontFamily: T.sans, fontSize: 9, color: T.muted, textTransform: 'uppercase', letterSpacing: '.1em', marginBottom: 4 }}>{l}</p>
@@ -2009,6 +2131,22 @@ const handleUpdate = useCallback(async (id, payload) => {
                                       </div>
                                     ))}
                                   </div>
+
+                                  {/* Mistakes (only when rules were not followed) */}
+                                  {rulesVal === false && mistakes.length > 0 && (
+                                    <div style={{ marginTop: 12 }}>
+                                      <p style={{ fontFamily: T.sans, fontSize: 9, color: T.red, opacity: .8, textTransform: 'uppercase', letterSpacing: '.1em', marginBottom: 6 }}>
+                                        What went wrong
+                                      </p>
+                                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                        {mistakes.map(m => (
+                                          <span key={m} className="tj-tag" style={{ cursor: 'default', background: T.redL, color: T.red, border: `1px solid ${T.red}35` }}>
+                                            {m}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
 
@@ -2042,7 +2180,7 @@ const handleUpdate = useCallback(async (id, payload) => {
                 {/* Empty state */}
                 {!filteredTrades.length && (
                   <tr>
-                    <td colSpan={13} style={{ padding: '72px 24px', textAlign: 'center' }}>
+                    <td colSpan={14} style={{ padding: '72px 24px', textAlign: 'center' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
                         <div style={{ width: 56, height: 56, borderRadius: 16, background: T.surface, border: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                           <BarChart2 size={24} color={T.muted} />
@@ -2074,6 +2212,7 @@ const handleUpdate = useCallback(async (id, payload) => {
                 {filteredTrades.length} rows
                 {selected.size > 0 && ` · ${selected.size} selected`}
                 {sessionFilter !== 'All' && ` · ${sessionFilter} session`}
+                {rulesFilter !== 'All' && ` · rules ${rulesFilter === 'Yes' ? 'followed' : 'broken'}`}
                 {' · '}Avg R:{' '}
                 <span style={{ color: T.textSoft }}>
                   {fix2(filteredTrades.reduce((s, t) => s + rOf(t), 0) / filteredTrades.length)}
