@@ -5,10 +5,17 @@
  *           Trading session (New York / London / Tokyo / Sydney / Indian) column + filter
  *           Notes synced with Add/Edit Trade modal (saved to DB)
  *           Followed-rules (Yes / No) column + filter
+ *
+ * CHANGES IN THIS VERSION
+ *  1. Edit opens INSTANTLY (modal shows with the row data, full trade + screenshots load in the background,
+ *     and the full trade is prefetched when you hover the edit button).
+ *  2. Call/Put, Session and Followed-rules are overlaid locally right after add/update so the table
+ *     always shows what you just saved (the real fix for persistence is on the server — see notes).
  */
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useTrades } from '../hooks/useTrades';
 import { useAccount } from '../context/AccountContext';
+import { getTradeById } from '../services/tradeService';
 import AddTradeModal from '../components/Trades/AddTradeModal';
 import Loader from '../components/shared/Loader';
 import { formatCurrency } from '../utils/helpers';
@@ -73,6 +80,12 @@ const normalizeSession = (v) => {
   const hit = SESSIONS.find(s => s.name.toLowerCase() === q || (q === 'ny' && s.name === 'New York') || (q === 'india' && s.name === 'Indian'));
   return hit ? hit.name : null;
 };
+
+/* Fields that the table depends on and that must never "disappear" after a save.
+   We overlay them locally on top of whatever the server list returns. */
+const PATCH_KEYS = ['side', 'optionType', 'session', 'followedRules', 'mistakes'];
+const pickPatch = (p) =>
+  Object.fromEntries(PATCH_KEYS.filter(k => p && p[k] !== undefined).map(k => [k, p[k]]));
 
 /* ═════════════════════════ INJECT FONTS + KEYFRAMES ═════════════════════════ */
 if (typeof document !== 'undefined') {
@@ -544,6 +557,17 @@ const StreakBadge = ({ streak, type }) => {
   );
 };
 
+/* ══ Options show Call / Put, everything else shows Long / Short ══ */
+const sideOf    = (t) => t.optionType || t.side || '';
+const isBullish = (t) => ['call', 'long'].includes(sideOf(t).toLowerCase());
+
+const parseSide = (v) => {
+  const q = String(v || '').trim().toLowerCase();
+  if (q === 'call') return { side: 'Long', optionType: 'Call' };
+  if (q === 'put')  return { side: 'Long', optionType: 'Put' };
+  return { side: q === 'short' || q === 'sell' ? 'Short' : 'Long', optionType: null };
+};
+
 /* ══ CSV parser ══ */
 function parseCSV(text) {
   const lines = text.trim().split('\n');
@@ -555,7 +579,7 @@ function parseCSV(text) {
     return {
       date:    obj.date   || dayjs().format('YYYY-MM-DD'),
       symbol:  (obj.symbol || 'UNKNOWN').toUpperCase(),
-      side:    obj.side   || obj.type || 'Long',
+      ...parseSide(obj.side || obj.type),
       pnl:     parseFloat(obj.pnl || obj['p&l'] || obj.profit || '0') || 0,
       session: normalizeSession(obj.session),
       notes:   obj.notes  || '',
@@ -609,7 +633,7 @@ function TradeImagePanel({ tradeId, images, onImagesChange, loading }) {
   const handleFiles = useCallback((files) => {
     const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
     if (!imageFiles.length) return;
-        imageFiles.forEach(file => {
+    imageFiles.forEach(file => {
       compressImage(file).then(src => {
         onImagesChange(prev => ({
           ...prev,
@@ -641,7 +665,7 @@ function TradeImagePanel({ tradeId, images, onImagesChange, loading }) {
         <div style={{ width: 24, height: 24, borderRadius: 6, background: T.accentL, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Image size={12} color={T.accent} />
         </div>
-                <span style={{ fontFamily: T.sans, fontSize: 11, fontWeight: 700, color: T.textSoft, textTransform: 'uppercase', letterSpacing: '.1em' }}>
+        <span style={{ fontFamily: T.sans, fontSize: 11, fontWeight: 700, color: T.textSoft, textTransform: 'uppercase', letterSpacing: '.1em' }}>
           Trade Screenshots
         </span>
         {tradeImages.length > 0 && (
@@ -791,16 +815,16 @@ function RecycleBinPanel({ deletedTrades, onRestore, onPermanentDelete, onEmptyB
 
                   {/* Side */}
                   <td style={{ padding: '10px 16px' }}>
-                    {trade.side ? (
+                    {sideOf(trade) ? (
                       <span style={{
                         fontFamily: T.mono, fontSize: 9, fontWeight: 700,
                         padding: '2px 8px', borderRadius: 5,
-                        background: trade.side?.toLowerCase() === 'long' ? 'rgba(0,229,160,0.06)' : 'rgba(255,68,102,0.06)',
-                        color: trade.side?.toLowerCase() === 'long' ? `${T.green}80` : `${T.red}80`,
-                        border: `1px solid ${trade.side?.toLowerCase() === 'long' ? `${T.green}18` : `${T.red}18`}`,
+                        background: isBullish(trade) ? 'rgba(0,229,160,0.06)' : 'rgba(255,68,102,0.06)',
+                        color: isBullish(trade) ? `${T.green}80` : `${T.red}80`,
+                        border: `1px solid ${isBullish(trade) ? `${T.green}18` : `${T.red}18`}`,
                         opacity: 0.8,
                       }}>
-                        {trade.side.toUpperCase()}
+                        {sideOf(trade).toUpperCase()}
                       </span>
                     ) : '—'}
                   </td>
@@ -841,41 +865,42 @@ function RecycleBinPanel({ deletedTrades, onRestore, onPermanentDelete, onEmptyB
                       </div>
                     </div>
                   </td>
-{/* Actions */}
-<td style={{ padding: '10px 16px', textAlign: 'right', verticalAlign: 'bottom' }}>
-  {isConfirm ? (
-    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, justifyContent: 'flex-end' }}>
-      <span style={{ fontFamily: T.mono, fontSize: 9, color: T.red }}>Permanently delete?</span>
-      <button className="tj-btn" onClick={() => { onPermanentDelete(trade.tid); setConfirmId(null); }}
-        style={{ background: T.redL, border: `1px solid ${T.red}30`, color: T.red, padding: '3px 10px', fontSize: 9 }}>
-        Delete
-      </button>
-      <button className="tj-btn" onClick={() => setConfirmId(null)}
-        style={{ background: T.card, border: `1px solid ${T.border}`, color: T.sub, padding: '3px 8px', fontSize: 9 }}>
-        No
-      </button>
-    </div>
-  ) : (
-    <div style={{ display: 'flex', alignItems: 'flex-end', flexDirection: 'column', gap: 6, justifyContent: 'flex-end' }}>
-      <button
-        className="tj-btn"
-        onClick={() => setConfirmId(trade.tid)}
-        style={{ background: 'transparent', border: `1px solid ${T.border}30`, color: T.muted, padding: '4px 8px', fontSize: 10 }}
-        title="Delete permanently"
-      >
-        <X size={10} />
-      </button>
-      <button
-        className="tj-btn"
-        onClick={() => onRestore(trade.tid)}
-        style={{ background: T.greenL, border: `1px solid ${T.green}30`, color: T.green, padding: '4px 12px', fontSize: 10 }}
-        title="Restore this trade"
-      >
-        <RotateCcw size={10} /> Restore
-      </button>
-    </div>
-  )}
-</td>
+
+                  {/* Actions */}
+                  <td style={{ padding: '10px 16px', textAlign: 'right', verticalAlign: 'bottom' }}>
+                    {isConfirm ? (
+                      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, justifyContent: 'flex-end' }}>
+                        <span style={{ fontFamily: T.mono, fontSize: 9, color: T.red }}>Permanently delete?</span>
+                        <button className="tj-btn" onClick={() => { onPermanentDelete(trade.tid); setConfirmId(null); }}
+                          style={{ background: T.redL, border: `1px solid ${T.red}30`, color: T.red, padding: '3px 10px', fontSize: 9 }}>
+                          Delete
+                        </button>
+                        <button className="tj-btn" onClick={() => setConfirmId(null)}
+                          style={{ background: T.card, border: `1px solid ${T.border}`, color: T.sub, padding: '3px 8px', fontSize: 9 }}>
+                          No
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'flex-end', flexDirection: 'column', gap: 6, justifyContent: 'flex-end' }}>
+                        <button
+                          className="tj-btn"
+                          onClick={() => setConfirmId(trade.tid)}
+                          style={{ background: 'transparent', border: `1px solid ${T.border}30`, color: T.muted, padding: '4px 8px', fontSize: 10 }}
+                          title="Delete permanently"
+                        >
+                          <X size={10} />
+                        </button>
+                        <button
+                          className="tj-btn"
+                          onClick={() => onRestore(trade.tid)}
+                          style={{ background: T.greenL, border: `1px solid ${T.green}30`, color: T.green, padding: '4px 12px', fontSize: 10 }}
+                          title="Restore this trade"
+                        >
+                          <RotateCcw size={10} /> Restore
+                        </button>
+                      </div>
+                    )}
+                  </td>
                 </tr>
               );
             })}
@@ -913,13 +938,25 @@ function StatCard({ label, value, color, sub, icon: Icon, spark, delay = 0, anim
    MAIN COMPONENT
 ═════════════════════════════════════════════════════════════ */
 const Trades = () => {
-const { trades, loading, addTrade, editTrade, removeTrade: deleteTrade, fetchTradeImages } = useTrades();
-const { applyTradePnl, removeTradePnl } = useAccount();
+  const {
+    trades: rawTrades, loading, addTrade, editTrade,
+    removeTrade: deleteTrade, fetchTradeImages,
+  } = useTrades();
+  const { applyTradePnl, removeTradePnl } = useAccount();
+
+  // ── Local overlay for fields the table depends on (optionType / session / followedRules …) ──
+  // Whatever you just saved is shown immediately, even if the list endpoint omits those fields.
+  const [patches, setPatches] = useState({});
+  const trades = useMemo(() => rawTrades.map(t => {
+    const p = patches[t._id ?? t.id];
+    return p ? { ...t, ...p } : t;
+  }), [rawTrades, patches]);
+
   const [modalOpen,    setModalOpen]    = useState(false);
   const [editingTrade, setEditingTrade] = useState(null);
   const [filter,       setFilter]       = useState('All');
   const [sessionFilter, setSessionFilter] = useState('All');
-  const [rulesFilter,  setRulesFilter]  = useState('All');          // ← NEW: All | Yes | No
+  const [rulesFilter,  setRulesFilter]  = useState('All');          // All | Yes | No
   const [search,       setSearch]       = useState('');
   const [dateFrom,     setDateFrom]     = useState('');
   const [dateTo,       setDateTo]       = useState('');
@@ -938,13 +975,12 @@ const { applyTradePnl, removeTradePnl } = useAccount();
   const [dragOver,     setDragOver]     = useState(false);
   const [deletingId,   setDeletingId]   = useState(null);
 
-
   const [imgLoading, setImgLoading] = useState({});
   const imgFetched  = useRef(new Set());  // ids already loaded (including "has no images")
   const imgInflight = useRef({});         // id -> Promise, so hover-prefetch and click share one request
   const hoverTimer  = useRef();
   const noteTimers  = useRef({});         // dbId -> debounce timer for saving notes
-
+  const fullCache   = useRef({});         // id -> Promise<full trade>  (edit prefetch cache)
 
   // ── Recycle Bin state ──────────────────────────────────────
   const [deletedTrades, setDeletedTrades] = useState(() => {
@@ -998,18 +1034,18 @@ const { applyTradePnl, removeTradePnl } = useAccount();
   }, []);
 
   // ── Hydrate tradeImages from DB ──
-useEffect(() => {
-  if (!trades.length) return;
-  setTradeImages(prev => {
-    const next = { ...prev };
-    trades.forEach((t) => {
-      if (t.images?.length && !next[t._id]?.some(img => img.src)) {
-        next[t._id] = t.images;
-      }
+  useEffect(() => {
+    if (!rawTrades.length) return;
+    setTradeImages(prev => {
+      const next = { ...prev };
+      rawTrades.forEach((t) => {
+        if (t.images?.length && !next[t._id]?.some(img => img.src)) {
+          next[t._id] = t.images;
+        }
+      });
+      return next;
     });
-    return next;
-  });
-}, [trades]);
+  }, [rawTrades]);
 
   /* ── Notes: single source of truth ──
      Page edits (tradeNotes) win; otherwise use the notes saved with the trade (written in the Add/Edit modal). */
@@ -1024,25 +1060,89 @@ useEffect(() => {
     clearTimeout(noteTimers.current[dbId]);
     const run = () => {
       delete noteTimers.current[dbId];
+      delete fullCache.current[dbId];
       Promise.resolve(editTrade(dbId, { notes: text || null })).catch(e => console.error('Failed to save notes', e));
     };
     if (immediate) run();
     else noteTimers.current[dbId] = setTimeout(run, 600);
   }, [editTrade]);
 
-  /* ── Modal open / close (new + edit share the same modal) ── */
-  const openNew = useCallback(() => { setEditingTrade(null); setModalOpen(true); }, []);
-  const openEdit = useCallback((e, trade) => {
-    e?.stopPropagation();
-    setEditingTrade(trade);
-    setModalOpen(true);
+  /* ── Full-trade fetch with cache (shared by hover-prefetch and the edit click) ── */
+  const getFull = useCallback((id) => {
+    if (!fullCache.current[id]) {
+      fullCache.current[id] = getTradeById(id)
+        .then(res => res?.data)
+        .catch(err => { delete fullCache.current[id]; throw err; });
+    }
+    return fullCache.current[id];
   }, []);
-  const closeModal = useCallback(() => { setModalOpen(false); setEditingTrade(null); }, []);
+
+  const prefetchEdit = useCallback((trade) => {
+    const id = trade?._id ?? trade?.id;
+    if (id) getFull(id).catch(() => {});
+  }, [getFull]);
+
+  /* ── Modal open / close (new + edit share the same modal) ── */
+  const editRequest = useRef(null); // latest trade requested for editing
+  const openNew = useCallback(() => { editRequest.current = null; setEditingTrade(null); setModalOpen(true); }, []);
+
+  /* Edit opens INSTANTLY with the row data. The full trade (+ screenshots) loads in the
+     background and the modal fills in any untouched fields when it arrives. */
+  const openEdit = useCallback(async (e, trade) => {
+    e?.stopPropagation();
+    const id = trade._id ?? trade.id;
+    editRequest.current = id;
+
+    const cachedImgs = tradeImages[id];
+    const localImgs  = cachedImgs?.length ? cachedImgs : (trade.images || []);
+
+    // 1) open right now
+    setEditingTrade({
+      ...trade,
+      notes: tradeNotes[id] ?? trade.notes,
+      images: localImgs,
+      screenshot: localImgs[0]?.src || trade.screenshot || '',
+      _hydrating: true,
+    });
+    setModalOpen(true);
+
+    // 2) fill in the rest in the background
+    try {
+      const full = await getFull(id);
+      if (!full) throw new Error('Trade not found');
+      if (editRequest.current !== id) return; // another trade was opened meanwhile
+
+      let imgs = full.images?.length ? full.images : null;
+      if (!imgs) imgs = localImgs.some(i => i.src) ? localImgs : await fetchTradeImages(id);
+      if (!imgs?.length && full.screenshot) {
+        imgs = [{ id: `img_${id}`, src: full.screenshot, name: `${full.symbol}_chart.png`, addedAt: full.createdAt }];
+      }
+      imgs = imgs || [];
+      if (editRequest.current !== id) return;
+
+      setTradeImages(prev => ({ ...prev, [id]: imgs }));
+      setEditingTrade({
+        ...trade,
+        ...full,
+        notes: tradeNotes[id] ?? full.notes,
+        images: imgs,
+        screenshot: imgs[0]?.src || '',
+        _hydrating: false,
+      });
+    } catch (err) {
+      console.error('Failed to load trade for edit', err);
+      if (editRequest.current === id) {
+        setEditingTrade(prev => (prev ? { ...prev, _hydrating: false } : prev));
+      }
+    }
+  }, [fetchTradeImages, tradeNotes, tradeImages, getFull]);
+
+  const closeModal = useCallback(() => { editRequest.current = null; setModalOpen(false); setEditingTrade(null); }, []);
 
   /* ── Delete trade → Recycle Bin ── */
   const handleDelete = useCallback((e, trade, idx) => {
     e.stopPropagation();
-const tid = trade._id ?? trade.id ?? `${trade.symbol}_${trade.date}_${trade.pnl}_${idx}`;
+    const tid = trade._id ?? trade.id ?? `${trade.symbol}_${trade.date}_${trade.pnl}_${idx}`;
     // Animate out
     setDeletingId(tid);
     setTimeout(() => {
@@ -1067,6 +1167,7 @@ const tid = trade._id ?? trade.id ?? `${trade.symbol}_${trade.date}_${trade.pnl}
         deleteTrade(trade._id || trade.id);
       }
       if (trade._id || trade.id) removeTradePnl(trade._id || trade.id);
+      delete fullCache.current[trade._id || trade.id];
       // Collapse if expanded
       setExpanded(cur => cur === tid ? null : cur);
     }, 320);
@@ -1122,7 +1223,7 @@ const tid = trade._id ?? trade.id ?? `${trade.symbol}_${trade.date}_${trade.pnl}
         const tid = t.id ?? t._id ?? `${t.symbol}_${t.date}_${t.pnl}`;
         if (binIds.has(tid)) return false;
         const outcome = t.pnl > 0 ? 'Winners' : t.pnl < 0 ? 'Losers' : 'Breakeven';
-        if (filter !== 'All' && filter !== outcome && t.side !== filter) return false;
+        if (filter !== 'All' && filter !== outcome && sideOf(t) !== filter) return false;
         // Session filter
         if (sessionFilter !== 'All' && t.session !== sessionFilter) return false;
         // Followed-rules filter
@@ -1179,25 +1280,23 @@ const tid = trade._id ?? trade.id ?? `${trade.symbol}_${trade.date}_${trade.pnl}
     return counts;
   }, [trades, deletedTrades]);
 
-
-/* ── Bulk delete selected ── */
-const handleBulkDelete = useCallback(() => {
-  const toDelete = filteredTrades.filter((t, i) => {
-    const tid = t.id ?? t._id ?? `${t.symbol}_${t.date}_${t.pnl}_${i}`;
-    return selected.has(tid);
-  });
-  toDelete.forEach((t, i) => {
-    const tid = t.id ?? t._id ?? `${t.symbol}_${t.date}_${t.pnl}_${i}`;
-    setDeletedTrades(prev => {
-      if (prev.find(x => x.tid === tid)) return prev;
-      return [...prev, { ...t, tid, deletedAt: new Date().toISOString(), notes: noteOf(t, tid), tags: tradeTags[tid] || [], imgs: tradeImages[tid] || [] }];
+  /* ── Bulk delete selected ── */
+  const handleBulkDelete = useCallback(() => {
+    const toDelete = filteredTrades.filter((t, i) => {
+      const tid = t.id ?? t._id ?? `${t.symbol}_${t.date}_${t.pnl}_${i}`;
+      return selected.has(tid);
     });
-    if (typeof deleteTrade === 'function') deleteTrade(t._id || t.id);
-    if (t._id || t.id) removeTradePnl(t._id || t.id);
-  });
-  setSelected(new Set());
-}, [selected, filteredTrades, noteOf, tradeTags, tradeImages, deleteTrade, removeTradePnl]);
-
+    toDelete.forEach((t, i) => {
+      const tid = t.id ?? t._id ?? `${t.symbol}_${t.date}_${t.pnl}_${i}`;
+      setDeletedTrades(prev => {
+        if (prev.find(x => x.tid === tid)) return prev;
+        return [...prev, { ...t, tid, deletedAt: new Date().toISOString(), notes: noteOf(t, tid), tags: tradeTags[tid] || [], imgs: tradeImages[tid] || [] }];
+      });
+      if (typeof deleteTrade === 'function') deleteTrade(t._id || t.id);
+      if (t._id || t.id) removeTradePnl(t._id || t.id);
+    });
+    setSelected(new Set());
+  }, [selected, filteredTrades, noteOf, tradeTags, tradeImages, deleteTrade, removeTradePnl]);
 
   /* ── Stats ── */
   const stats = useMemo(() => {
@@ -1282,7 +1381,6 @@ const handleBulkDelete = useCallback(() => {
     return selected.has(tid);
   });
 
-  /* ── Expand toggle ── */
   /* ── Load a trade's images once; concurrent callers share the same request ── */
   const loadImages = useCallback((id) => {
     if (imgFetched.current.has(id)) return Promise.resolve();
@@ -1294,14 +1392,13 @@ const handleBulkDelete = useCallback(() => {
       try {
         let imgs = await fetchTradeImages(id);
         if (!imgs?.length) {
-          const { getTradeById } = await import('../services/tradeService');
-          const res = await getTradeById(id);
-          if (res.data?.screenshot) {
+          const full = await getFull(id);
+          if (full?.screenshot) {
             imgs = [{
               id: `img_${id}`,
-              src: res.data.screenshot,
-              name: `${res.data.symbol}_chart.png`,
-              addedAt: res.data.createdAt,
+              src: full.screenshot,
+              name: `${full.symbol}_chart.png`,
+              addedAt: full.createdAt,
             }];
           }
         }
@@ -1316,7 +1413,7 @@ const handleBulkDelete = useCallback(() => {
     })();
     imgInflight.current[id] = p;
     return p;
-  }, [tradeImages, fetchTradeImages]);
+  }, [tradeImages, fetchTradeImages, getFull]);
 
   const toggleExpand = useCallback((id) => {
     setExpanded(cur => cur === id ? null : id);
@@ -1335,7 +1432,7 @@ const handleBulkDelete = useCallback(() => {
     const rows = (subset || filteredTrades).map(t => {
       const tid = t.id ?? t._id ?? `${t.symbol}_${t.date}_${t.pnl}`;
       const rules = t.followedRules === true ? 'Yes' : t.followedRules === false ? 'No' : '';
-      return `${t.date},${t.symbol},${t.side || ''},"${t.session || ''}","${(t.strategy || '').replace(/"/g, "'")}",${t.pnl},${rOf(t)},${rules},"${noteOf(t, tid).replace(/"/g, "'")}","${(tradeTags[tid] || []).join(';')}"`;
+      return `${t.date},${t.symbol},${sideOf(t)},"${t.session || ''}","${(t.strategy || '').replace(/"/g, "'")}",${t.pnl},${rOf(t)},${rules},"${noteOf(t, tid).replace(/"/g, "'")}","${(tradeTags[tid] || []).join(';')}"`;
     });
     const blob = new Blob([['Date,Symbol,Side,Session,Strategy,PnL,R-Multiple,Followed Rules,Notes,Tags', ...rows].join('\n')], { type: 'text/csv' });
     const a = Object.assign(document.createElement('a'), {
@@ -1360,57 +1457,77 @@ const handleBulkDelete = useCallback(() => {
   };
 
   /* ── Add trade ── */
-const handleAdd = useCallback(async (trade) => {
-  const saved = await addTrade(trade);
-  if (saved?.pnl > 0) setTimeout(spawnConfetti, 100);
-  if (saved?._id) await applyTradePnl(saved.pnl, saved._id, saved.symbol);
-  const src = saved?.screenshot;
-  if (src && saved?._id) {
-    const image = {
-      id: `img_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-      src,
-      name: `${saved.symbol}_chart.png`,
-      addedAt: new Date().toISOString()
-    };
-    setTradeImages(prev => ({
-      ...prev,
-      [saved._id]: [image],
-    }));
-  }
-  // Notes written in the modal are saved on the trade itself (trade.notes) and shown via noteOf()
-}, [addTrade, applyTradePnl]);
+  const handleAdd = useCallback(async (trade) => {
+    const saved = await addTrade(trade);
+    if (saved?.pnl > 0) setTimeout(spawnConfetti, 100);
+    if (saved?._id) {
+      // show Call/Put, Session and Rules immediately
+      setPatches(prev => ({ ...prev, [saved._id]: pickPatch(trade) }));
+      await applyTradePnl(saved.pnl, saved._id, saved.symbol);
+    }
+    const src = saved?.screenshot;
+    if (src && saved?._id) {
+      const image = {
+        id: `img_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        src,
+        name: `${saved.symbol}_chart.png`,
+        addedAt: new Date().toISOString()
+      };
+      setTradeImages(prev => ({
+        ...prev,
+        [saved._id]: [image],
+      }));
+    }
+    // Notes written in the modal are saved on the trade itself (trade.notes) and shown via noteOf()
+  }, [addTrade, applyTradePnl]);
 
   /* ── Update (edit) trade ── */
-const handleUpdate = useCallback(async (id, payload) => {
-  const old = trades.find(t => (t._id ?? t.id) === id);
-  await editTrade(id, payload);
+  const handleUpdate = useCallback(async (id, payload) => {
+    const old = trades.find(t => (t._id ?? t.id) === id);
 
-  // Notes edited in the modal → show them immediately in the row's Notes box
-  if (payload.notes !== undefined) {
-    setTradeNotes(prev => ({ ...prev, [id]: payload.notes || '' }));
-  }
-
-  // Keep the account balance in sync if P&L or symbol changed
-  const pnlChanged    = (Number(old?.pnl) || 0) !== (Number(payload.pnl) || 0);
-  const symbolChanged = !!old && old.symbol !== payload.symbol;
-  if (pnlChanged || symbolChanged) {
-    await removeTradePnl(id);
-    if (payload.pnl !== null && payload.pnl !== undefined) {
-      await applyTradePnl(payload.pnl, id, payload.symbol);
+    // New or removed screenshot → update images[] too
+    const current = tradeImages[id] || old?.images || [];
+    let nextImages;
+    if (typeof payload.screenshot === 'string') {
+      const image = {
+        id: `img_${id}`,
+        src: payload.screenshot,
+        name: `${payload.symbol}_chart.png`,
+        addedAt: new Date().toISOString(),
+      };
+      nextImages = [image, ...current.slice(1)];
+    } else if (payload.screenshot === null) {
+      nextImages = current.slice(1);
     }
-  }
 
-  // New screenshot picked in the edit form → replace the main image shown in the row
-  if (typeof payload.screenshot === 'string') {
-    const image = {
-      id: `img_${id}`,
-      src: payload.screenshot,
-      name: `${payload.symbol}_chart.png`,
-      addedAt: new Date().toISOString(),
-    };
-    setTradeImages(prev => ({ ...prev, [id]: [image, ...(prev[id] || []).slice(1)] }));
-  }
-}, [trades, editTrade, applyTradePnl, removeTradePnl]);
+    await editTrade(id, nextImages
+      ? { ...payload, images: nextImages, screenshot: nextImages[0]?.src || null }
+      : payload);
+
+    // The cached "full trade" is stale now
+    delete fullCache.current[id];
+
+    // Show Call/Put, Session and Rules immediately in the table
+    setPatches(prev => ({ ...prev, [id]: pickPatch(payload) }));
+
+    // Notes edited in the modal → show them immediately in the row's Notes box
+    if (payload.notes !== undefined) {
+      setTradeNotes(prev => ({ ...prev, [id]: payload.notes || '' }));
+    }
+
+    // Keep the account balance in sync if P&L or symbol changed
+    const pnlChanged    = (Number(old?.pnl) || 0) !== (Number(payload.pnl) || 0);
+    const symbolChanged = !!old && old.symbol !== payload.symbol;
+    if (pnlChanged || symbolChanged) {
+      await removeTradePnl(id);
+      if (payload.pnl !== null && payload.pnl !== undefined) {
+        await applyTradePnl(payload.pnl, id, payload.symbol);
+      }
+    }
+
+    // New screenshot picked in the edit form → replace the main image shown in the row
+    if (nextImages) setTradeImages(prev => ({ ...prev, [id]: nextImages }));
+  }, [trades, tradeImages, editTrade, applyTradePnl, removeTradePnl]);
 
   if (loading) return <Loader />;
 
@@ -1643,7 +1760,7 @@ const handleUpdate = useCallback(async (id, payload) => {
         {/* ══ FILTER BAR ══ */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: '12px 16px', marginBottom: 10, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           <div style={{ display: 'flex', gap: 2, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 3 }}>
-            {['All','Long','Short','Winners','Losers'].map(f => (
+            {['All','Long','Short','Call','Put','Winners','Losers'].map(f => (
               <button key={f} onClick={() => setFilter(f)} style={{ padding: '5px 14px', fontSize: 10, fontFamily: T.mono, fontWeight: 700, border: 'none', cursor: 'pointer', borderRadius: 8, letterSpacing: '.04em', background: filter === f ? T.accent : 'transparent', color: filter === f ? '#fff' : T.sub, transition: 'all .15s', boxShadow: filter === f ? `0 2px 12px rgba(79,142,247,.35)` : 'none' }}>{f}</button>
             ))}
           </div>
@@ -1893,9 +2010,9 @@ const handleUpdate = useCallback(async (id, payload) => {
                         {/* Side */}
                         {cols.side && (
                           <td style={{ padding: '12px 16px' }}>
-                            {trade.side ? (
-                              <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 800, padding: '3px 10px', borderRadius: 6, letterSpacing: '.06em', background: trade.side?.toLowerCase() === 'long' ? T.greenL : T.redL, color: trade.side?.toLowerCase() === 'long' ? T.green : T.red, border: `1px solid ${trade.side?.toLowerCase() === 'long' ? `${T.green}30` : `${T.red}30`}` }}>
-                                {trade.side.toUpperCase()}
+                            {sideOf(trade) ? (
+                              <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 800, padding: '3px 10px', borderRadius: 6, letterSpacing: '.06em', background: isBullish(trade) ? T.greenL : T.redL, color: isBullish(trade) ? T.green : T.red, border: `1px solid ${isBullish(trade) ? `${T.green}30` : `${T.red}30`}` }}>
+                                {sideOf(trade).toUpperCase()}
                               </span>
                             ) : <span style={{ color: T.muted }}>—</span>}
                           </td>
@@ -1979,7 +2096,7 @@ const handleUpdate = useCallback(async (id, payload) => {
                         {/* Actions: edit + delete + expand */}
                         <td style={{ padding: '12px 16px', textAlign: 'right' }} onClick={e => e.stopPropagation()}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
-                            {/* Edit button — hidden until row hover */}
+                            {/* Edit button — hidden until row hover; prefetches the full trade on hover */}
                             <div className="tj-delete-btn tj-tooltip-wrap">
                               <button
                                 onClick={e => openEdit(e, trade)}
@@ -1992,6 +2109,7 @@ const handleUpdate = useCallback(async (id, payload) => {
                                   transition: 'all .15s',
                                 }}
                                 onMouseEnter={e => {
+                                  prefetchEdit(trade);
                                   e.currentTarget.style.background = T.accentL;
                                   e.currentTarget.style.borderColor = `${T.accent}40`;
                                   e.currentTarget.style.color = T.accent;
@@ -2056,6 +2174,7 @@ const handleUpdate = useCallback(async (id, payload) => {
                               {/* Edit button */}
                               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }} onClick={e => e.stopPropagation()}>
                                 <button className="tj-btn" onClick={e => openEdit(e, trade)}
+                                  onMouseEnter={() => prefetchEdit(trade)}
                                   style={{ background: T.accentL, border: `1px solid ${T.accent}35`, color: T.accent, padding: '6px 14px', fontSize: 10 }}>
                                   <Pencil size={11} /> Edit Trade
                                 </button>
@@ -2119,7 +2238,7 @@ const handleUpdate = useCallback(async (id, payload) => {
                                       { l: 'R×',       v: `${r >= 0 ? '+' : ''}${r}R`, c: r >= 1 ? T.green : r >= 0 ? T.accent : T.red },
                                       { l: 'Planned RR', v: plannedR ? `1 : ${fix2(plannedR)}` : '—', c: plannedR ? T.cyan : T.muted },
                                       { l: 'Date',     v: dayjs(trade.date).format('MMM D'), c: T.textSoft },
-                                      { l: 'Side',     v: (trade.side || '—').toUpperCase(), c: trade.side?.toLowerCase() === 'long' ? T.green : T.red },
+                                      { l: 'Side',     v: (sideOf(trade) || '—').toUpperCase(), c: isBullish(trade) ? T.green : T.red },
                                       { l: 'Strategy', v: trade.strategy || '—', c: trade.strategy ? T.purple : T.muted },
                                       { l: 'Session',  v: sessionMeta ? `${sessionMeta.icon} ${sessionMeta.name}` : '—', c: sessionMeta ? sessionMeta.color : T.muted },
                                       { l: 'Timeframe', v: trade.timeframe || '—', c: trade.timeframe ? T.textSoft : T.muted },
@@ -2155,14 +2274,16 @@ const handleUpdate = useCallback(async (id, payload) => {
 
                               {/* Image section */}
                               <div onClick={e => e.stopPropagation()}>
-                                                                <TradeImagePanel
+                                <TradeImagePanel
                                   tradeId={tid}
                                   images={tradeImages}
                                   loading={!!imgLoading[tid]}
                                   onImagesChange={(updaterFn) => {
                                     setTradeImages(prev => {
                                       const next = typeof updaterFn === 'function' ? updaterFn(prev) : updaterFn;
-                                      editTrade(tid, { images: next[tid] || [] });
+                                      const list = next[tid] || [];
+                                      delete fullCache.current[dbId];
+                                      editTrade(dbId, { images: list, screenshot: list[0]?.src || null });
                                       return next;
                                     });
                                   }}

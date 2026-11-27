@@ -3,6 +3,7 @@ import { useSetups } from '../../hooks/useSetups';
 import { compressImage } from '../../utils/compressImage';
 import Modal from '../shared/Modal';
 import Button from '../shared/Button';
+import { MISTAKE_TAGS, POSITIVE_TAGS, TAG_META, MISTAKE_KEYS } from './tagOptions';
 
 const SYMBOL_DB = [
   { s:'BTC', label:'Bitcoin', type:'crypto' },
@@ -98,22 +99,6 @@ const DEFAULT_STRATEGIES = [
   'Breakout','Reversal','Trend Following','Scalp','Swing Trade',
   'News / FOMC','Supply & Demand','Order Block','VWAP Bounce',
   'Gap Fill','Liquidity Grab','ICT / SMC','Mean Reversion',
-];
-
-/* ── Discipline: mistake tags (shown when "Did you follow all your rules?" = No) ── */
-const MISTAKE_OPTIONS = [
-  { key: 'FOMO',                icon: '😰' },
-  { key: 'Revenge Trade',       icon: '😡' },
-  { key: 'Loss Recovery',       icon: '🩹' },
-  { key: 'Overtrading',         icon: '🔁' },
-  { key: 'Oversized Position',  icon: '⚖️' },
-  { key: 'Moved / Removed SL',  icon: '🛑' },
-  { key: 'No Stop Loss',        icon: '🚫' },
-  { key: 'Chased Entry',        icon: '🏃' },
-  { key: 'Averaged Down',       icon: '📉' },
-  { key: 'Early Exit',          icon: '⏱️' },
-  { key: 'Held Too Long',       icon: '⏳' },
-  { key: 'Ignored Setup',       icon: '🙈' },
 ];
 
 /* ── Options (Indian index options) ──
@@ -286,12 +271,13 @@ const initialForm = {
   exitPrice:'',              // hidden: only used to keep an older trade's saved exit while editing
   lots:'1', lotSize:'',
   timeframe:'', session:'', strategy:'', outcome:'',
-  followedRules:'', mistakes:[],
+  followedRules:'',
+  tags:[],                   // array of tag keys (mistakes + positives + any older custom tags)
   riskAmount:'', manualPnl:'',
-  tags:'', notes:'', screenshot:null,
+  notes:'', screenshot:null,
   date: todayStr(),
 };
-const freshForm = () => ({ ...initialForm, mistakes: [], date: todayStr() });
+const freshForm = () => ({ ...initialForm, tags: [], date: todayStr() });
 
 /* ── Edit mode helpers ── */
 const numStr = (v) => (v === null || v === undefined || v === '' || isNaN(Number(v)) ? '' : String(v));
@@ -310,27 +296,59 @@ const deriveManualPnl = (trade, f) => {
 const tradeToForm = (trade) => {
   const d = trade.date ? new Date(trade.date) : null;
   const opt = OPTION_SYMBOLS[trade.symbol];
+  const e = Number(trade.entryPrice);
+  const s = Number(trade.sl);
+
+  // Options → Call / Put (only trust saved optionType; old trades have none → blank so you choose)
+  // Everything else → Long / Short
+  const side = opt
+    ? (trade.optionType === 'Call' || trade.optionType === 'Put' ? trade.optionType : '')
+    : (trade.side === 'Short' ? 'Short' : 'Long');
+
+  // Lots: use saved value, otherwise recover it from saved quantity / risk amount
+  const lotSizeNum = Number(trade.lotSize) || opt?.lotSize || 0;
+  let lots = numStr(trade.lots);
+  if (opt && !lots && lotSizeNum > 0) {
+    const qty =
+      Number(trade.quantity) > 0 ? Number(trade.quantity)
+      : (Number(trade.riskAmount) > 0 && e > s && s > 0) ? Number(trade.riskAmount) / (e - s)
+      : 0;
+    if (qty > 0) {
+      const l = qty / lotSizeNum;
+      lots = String(Math.abs(l - Math.round(l)) < 0.02 ? Math.round(l) : r2(l));
+    }
+  }
+
+  // Screenshot: single field, or first item of the images array
+  const shot = trade.screenshot || trade.images?.[0]?.src || '';
+
+  // Tags: saved tags + any older "mistakes" array (merged, de-duplicated)
+  const legacyTags = Array.isArray(trade.tags)
+    ? trade.tags
+    : (trade.tags ? String(trade.tags).split(',').map(t => t.trim()).filter(Boolean) : []);
+  const oldMistakes = Array.isArray(trade.mistakes) ? trade.mistakes : [];
+  const tags = [...new Set([...legacyTags, ...oldMistakes])];
+
   const base = {
     symbol:     trade.symbol || '',
     tradeType:  trade.tradeType || SYMBOL_DB.find(r => r.s === trade.symbol)?.type || '',
-    side:       trade.optionType || trade.side || 'Long',
+    side,
     tp:         numStr(trade.tp),
     entryPrice: numStr(trade.entryPrice),
     sl:         numStr(trade.sl),
     exitPrice:  '',
-    lots:       numStr(trade.lots),
+    lots,
     lotSize:    numStr(trade.lotSize) || (opt ? String(opt.lotSize) : ''),
     timeframe:  trade.timeframe || '',
     session:    trade.session   || '',
     strategy:   trade.strategy  || '',
     outcome:    trade.outcome   || '',
     followedRules: trade.followedRules === true ? 'Yes' : trade.followedRules === false ? 'No' : '',
-    mistakes:   Array.isArray(trade.mistakes) ? trade.mistakes : [],
+    tags,
     riskAmount: numStr(trade.riskAmount),
     manualPnl:  '',
-    tags:       Array.isArray(trade.tags) ? trade.tags.join(', ') : (trade.tags || ''),
     notes:      trade.notes || '',
-    screenshot: trade.screenshot ? { existing: true, previewUrl: trade.screenshot } : null,
+    screenshot: shot ? { existing: true, previewUrl: shot } : null,
     date:       d && !isNaN(d) ? d.toISOString().split('T')[0] : todayStr(),
   };
 
@@ -363,6 +381,26 @@ const Field = ({ label, children, className='' }) => (
     {children}
   </div>
 );
+
+/* ── Tag chip (icon + label), used for both mistakes and positives ── */
+const TagChip = ({ tag, icon, kind, active, onClick }) => {
+  const activeCls =
+    kind === 'good' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+    : kind === 'bad' ? 'bg-red-500/20 text-red-300 border-red-500/50'
+    : 'bg-violet-500/20 text-violet-300 border-violet-500/50';
+  const hoverCls =
+    kind === 'good' ? 'hover:border-emerald-500/40'
+    : kind === 'bad' ? 'hover:border-red-500/40'
+    : 'hover:border-violet-500/40';
+  return (
+    <button type="button" onClick={onClick}
+      className={`px-3.5 py-2 rounded-xl text-xs font-medium border transition-all flex items-center gap-2
+        ${active ? activeCls : `bg-[#18181b] text-gray-400 border-[#27272a] ${hoverCls} hover:text-gray-200`}`}>
+      {icon && <span className="text-sm leading-none">{icon}</span>}
+      <span>{tag}</span>
+    </button>
+  );
+};
 
 /* ── Price Ladder ── */
 const PriceLadder = ({ tp, entryPrice, sl, onChange }) => {
@@ -476,7 +514,6 @@ const AddTradeModal = ({ isOpen, onClose, onAdd, onUpdate, editingTrade = null }
   // ── Options mode (NIFTY / BANKNIFTY / SENSEX) ──
   const optionCfg = OPTION_SYMBOLS[form.symbol] || null;
   const isOption  = !!optionCfg;
-  const effSide   = isOption ? 'Long' : form.side;   // premium is always bought first
   const cur       = isOption ? '₹' : '$';
   const inr       = isOption;
 
@@ -490,6 +527,7 @@ const AddTradeModal = ({ isOpen, onClose, onAdd, onUpdate, editingTrade = null }
     } else {
       if (side === 'Call') side = 'Long';
       if (side === 'Put')  side = 'Short';
+      if (side !== 'Long' && side !== 'Short') side = 'Long';
     }
     return {
       ...prev,
@@ -559,22 +597,24 @@ const AddTradeModal = ({ isOpen, onClose, onAdd, onUpdate, editingTrade = null }
     setSymOpen(true);
   };
 
-  // ── Discipline handlers ──
+  // ── Discipline: Yes / No only (tags live in the Tags section below) ──
   const setFollowedRules = (val) => {
-    setForm(prev => {
-      const next = prev.followedRules === val ? '' : val;
-      return { ...prev, followedRules: next, mistakes: next === 'No' ? prev.mistakes : [] };
-    });
+    setForm(prev => ({ ...prev, followedRules: prev.followedRules === val ? '' : val }));
   };
 
-  const toggleMistake = (key) => {
+  // ── Tags ──
+  const toggleTag = (key) => {
     setForm(prev => ({
       ...prev,
-      mistakes: prev.mistakes.includes(key)
-        ? prev.mistakes.filter(m => m !== key)
-        : [...prev.mistakes, key],
+      tags: prev.tags.includes(key) ? prev.tags.filter(t => t !== key) : [...prev.tags, key],
     }));
   };
+
+  // Older custom tags that aren't in the built-in lists — still shown so they can be removed
+  const extraTags = useMemo(
+    () => form.tags.filter(t => !TAG_META[t]),
+    [form.tags]
+  );
 
   const handleScreenshot = useCallback(async (file) => {
     if (!file || !file.type.startsWith('image/')) return;
@@ -598,6 +638,10 @@ const AddTradeModal = ({ isOpen, onClose, onAdd, onUpdate, editingTrade = null }
     // Edit mode only needs a symbol (older / imported trades may not have entry price or type)
     if (!form.symbol || (!isEdit && (!form.tradeType || !form.entryPrice))) {
       alert(isEdit ? 'Symbol is required.' : 'Please fill: Symbol, Trade Type, and Entry Price.');
+      return;
+    }
+    if (isOption && form.side !== 'Call' && form.side !== 'Put') {
+      alert('Please choose Call or Put.');
       return;
     }
     setLoading(true);
@@ -626,13 +670,14 @@ const AddTradeModal = ({ isOpen, onClose, onAdd, onUpdate, editingTrade = null }
         strategy:   form.strategy   || null,
         outcome:    form.outcome    || null,
         followedRules: form.followedRules === 'Yes' ? true : form.followedRules === 'No' ? false : null,
-        mistakes:   form.followedRules === 'No' ? form.mistakes : [],
+        // Tags: everything selected. Mistake tags are also mirrored into `mistakes` (keeps old stats working).
+        tags:       form.tags,
+        mistakes:   form.tags.filter(t => MISTAKE_KEYS.includes(t)),
         // Options: risk is auto (lots × lot size × Entry→SL). Other markets: the amount you typed.
         riskAmount: isOption
           ? (calc.risk ?? (parseFloat(form.riskAmount) || null))
           : (parseFloat(form.riskAmount) || null),
         pnl:        finalPnl,
-        tags:       form.tags ? form.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
         notes:      form.notes || null,
         date:       now,
       };
@@ -640,7 +685,7 @@ const AddTradeModal = ({ isOpen, onClose, onAdd, onUpdate, editingTrade = null }
       if (isEdit) {
         // new image → send it · removed image → send null · untouched → don't send the field
         if (form.screenshot?.base64)                          payload.screenshot = form.screenshot.base64;
-        else if (!form.screenshot && editingTrade.screenshot) payload.screenshot = null;
+        else if (!form.screenshot && (editingTrade.screenshot || editingTrade.images?.length)) payload.screenshot = null;
         await onUpdate(editingTrade._id ?? editingTrade.id, payload);
       } else {
         await onAdd({ ...payload, screenshot: form.screenshot?.base64 || null });
@@ -673,6 +718,9 @@ const AddTradeModal = ({ isOpen, onClose, onAdd, onUpdate, editingTrade = null }
   ] : [];
 
   const resultTone = calc.pnl !== null ? toneOf(calc.pnl) : TONES.flat;
+
+  const selectedMistakes  = form.tags.filter(t => TAG_META[t]?.kind === 'bad').length;
+  const selectedPositives = form.tags.filter(t => TAG_META[t]?.kind === 'good').length;
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={isEdit ? 'Edit Trade' : 'New Trade'}>
@@ -746,9 +794,14 @@ const AddTradeModal = ({ isOpen, onClose, onAdd, onUpdate, editingTrade = null }
               );
             })}
           </div>
+          {isOption && !form.side && (
+            <p className="text-amber-400 text-[10px] mt-1.5">
+              Select Call or Put for this trade.
+            </p>
+          )}
           {isOption && (
             <p className="text-gray-600 text-[10px] mt-1.5">
-              Call and Put are both bought first — enter your buy premium as Entry. The exit premium is taken from your Take Profit / Stop Loss / Entry based on the outcome you pick.
+              Call and Put are both bought first — enter your buy premium as Entry (SL &lt; Entry &lt; TP). The exit premium is taken from your Take Profit / Stop Loss / Entry based on the outcome you pick.
             </p>
           )}
         </Field>
@@ -1142,7 +1195,7 @@ const AddTradeModal = ({ isOpen, onClose, onAdd, onUpdate, editingTrade = null }
           </div>
         </Field>
 
-        {/* ── Discipline: rules + mistakes ── */}
+        {/* ── Discipline: Yes / No only ── */}
         <Field label="Did you follow all your rules?">
           <div className="flex gap-2">
             {[
@@ -1156,28 +1209,6 @@ const AddTradeModal = ({ isOpen, onClose, onAdd, onUpdate, editingTrade = null }
               </button>
             ))}
           </div>
-
-          {form.followedRules === 'No' && (
-            <div className="mt-2.5 bg-red-500/5 border border-red-500/15 rounded-2xl p-3">
-              <p className="text-[10px] uppercase tracking-widest text-red-400/70 font-medium mb-2">
-                What went wrong? <span className="normal-case text-gray-600">(select all that apply)</span>
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {MISTAKE_OPTIONS.map(m => {
-                  const active = form.mistakes.includes(m.key);
-                  return (
-                    <button key={m.key} type="button" onClick={() => toggleMistake(m.key)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all flex items-center gap-1.5
-                        ${active
-                          ? 'bg-red-500/20 text-red-300 border-red-500/50'
-                          : 'bg-[#18181b] text-gray-400 border-[#27272a] hover:border-red-500/40 hover:text-gray-200'}`}>
-                      <span>{m.icon}</span>{m.key}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
         </Field>
 
         {/* Screenshot */}
@@ -1210,9 +1241,51 @@ const AddTradeModal = ({ isOpen, onClose, onAdd, onUpdate, editingTrade = null }
           <input ref={fileRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
         </Field>
 
-        {/* Tags */}
+        {/* ── Tags: what went wrong + what went right ── */}
         <Field label="Tags">
-          <input value={form.tags} onChange={e => set('tags', e.target.value)} placeholder="FOMC, confluence, revenge-trade…" className={inputCls} />
+          <div className="space-y-3">
+            {/* Mistakes */}
+            <div className="bg-red-500/5 border border-red-500/15 rounded-2xl p-3">
+              <p className="text-[10px] uppercase tracking-widest text-red-400/80 font-semibold mb-2.5">
+                What went wrong? <span className="normal-case tracking-normal font-normal text-gray-600">(select all that apply)</span>
+                {selectedMistakes > 0 && <span className="ml-2 text-red-300">· {selectedMistakes}</span>}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {MISTAKE_TAGS.map(m => (
+                  <TagChip key={m.key} tag={m.key} icon={m.icon} kind="bad"
+                    active={form.tags.includes(m.key)} onClick={() => toggleTag(m.key)} />
+                ))}
+              </div>
+            </div>
+
+            {/* Positives */}
+            <div className="bg-emerald-500/5 border border-emerald-500/15 rounded-2xl p-3">
+              <p className="text-[10px] uppercase tracking-widest text-emerald-400/80 font-semibold mb-2.5">
+                What went right? <span className="normal-case tracking-normal font-normal text-gray-600">(select all that apply)</span>
+                {selectedPositives > 0 && <span className="ml-2 text-emerald-300">· {selectedPositives}</span>}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {POSITIVE_TAGS.map(p => (
+                  <TagChip key={p.key} tag={p.key} icon={p.icon} kind="good"
+                    active={form.tags.includes(p.key)} onClick={() => toggleTag(p.key)} />
+                ))}
+              </div>
+            </div>
+
+            {/* Older custom tags (kept so nothing is lost; click to remove) */}
+            {extraTags.length > 0 && (
+              <div className="bg-[#0b0b0d] border border-[#27272a] rounded-2xl p-3">
+                <p className="text-[10px] uppercase tracking-widest text-gray-500 font-semibold mb-2.5">
+                  Other tags <span className="normal-case tracking-normal font-normal text-gray-600">(click to remove)</span>
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {extraTags.map(t => (
+                    <TagChip key={t} tag={t} icon="🏷️" kind="other" active onClick={() => toggleTag(t)} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </Field>
 
         {/* Notes */}
